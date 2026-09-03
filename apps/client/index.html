@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CRDT Canvas — Collaborative Drawing Board</title>
+    <meta name="description" content="Real-time collaborative drawing board using CRDTs and WebRTC" />
+    <!-- Polyfill Node.js globals for browser -->
+    <script>
+      // Must use var (not let/const) so it becomes a global property accessible as bare identifier
+      var global = typeof globalThis !== 'undefined' ? globalThis : window;
+      var process = { env: { NODE_ENV: 'development' }, cwd: function() { return '/'; }, nextTick: function(cb) { setTimeout(cb, 0); } };
+      if (typeof Buffer === 'undefined') {
+        var Buffer = function(buf) { return buf; };
+        Buffer.isBuffer = function() { return true; };
+        Buffer.allocUnsafe = function(n) { return new Uint8Array(n); };
+        Buffer.from = function(arr) { return new Uint8Array(arr); };
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

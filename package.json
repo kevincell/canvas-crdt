@@ -1,0 +1,30 @@
+{
+  "name": "crdt-canvas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A real-time collaborative drawing board using Yjs CRDTs, WebRTC, and semantic conflict detection",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "npm --workspace @crdt-canvas/server run dev",
+    "dev:client": "npm --workspace @crdt-canvas/client run dev",
+    "dev:engine": "npm --workspace @crdt-canvas/engine run dev",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "tsc --noEmit -p packages/engine/tsconfig.json && tsc --noEmit -p apps/client/tsconfig.json && tsc --noEmit -p apps/server/tsconfig.json"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "concurrently": "^8.2.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

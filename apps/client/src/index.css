@@ -1,0 +1,87 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #0f0f14;
+  --bg-secondary: #1a1a24;
+  --bg-tertiary: #252535;
+  --surface: #1e1e2e;
+  --border: #2a2a3d;
+  --text: #e2e2f0;
+  --text-muted: #8888a8;
+  --accent: #7c3aed;
+  --accent-light: #a78bfa;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --success: #10b981;
+  --info: #3b82f6;
+  --canvas-bg: #12121a;
+  --canvas-grid: rgba(255, 255, 255, 0.03);
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  color: var(--text);
+  font: inherit;
+}
+
+button:not(:disabled):hover {
+  filter: brightness(1.15);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+/* MUI overrides */
+.MuiSlider-root {
+  height: 2px;
+}
+.MuiSlider-thumb {
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 50%;
+}
+.MuiSlider-track {
+  height: 2px;
+}
+.MuiChip-root {
+  font-family: 'Inter', sans-serif;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+@keyframes slideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}

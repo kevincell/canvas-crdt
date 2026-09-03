@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Test outputs
+coverage/
+.c8_output/
+test-results/
+playwright-report/
+.nyc_output/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+vite.log
+
+# Vite
+vite.config.ts.timestamp-*
+.cache/
+
+# TypeScript
+*.tsbuildinfo
+
+# OS
+ehthumbs.db
+Desktop.ini
+
+# Turbo / Build cache
+.turbo/
