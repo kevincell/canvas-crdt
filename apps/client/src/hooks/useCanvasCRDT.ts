@@ -88,6 +88,7 @@ export interface CanvasHooks {
   simulateOffline: () => void;
   simulateOnline: () => void;
   triggerReconnect: () => void;
+  commitShapeHistory: (id: string, prevData: any) => void;
 }
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
@@ -154,11 +155,11 @@ export function useCanvasCRDT(
           break;
         case 'ellipse':
           createShapeInCanvas({ doc, shapesArray, awareness: aw!, onChange: () => {}, dispose: () => {} } as any,
-            ShapeKind.Rect, { x: op.cx - op.rx, y: op.cy - op.ry, w: op.rx * 2, h: op.ry * 2, color: op.color }, actorName);
+            ShapeKind.Ellipse, { cx: op.cx, cy: op.cy, rx: op.rx, ry: op.ry, color: op.color }, actorName);
           break;
         case 'line':
           createShapeInCanvas({ doc, shapesArray, awareness: aw!, onChange: () => {}, dispose: () => {} } as any,
-            ShapeKind.Stroke, { points: [{ x: op.x1, y: op.y1 }, { x: op.x2, y: op.y2 }], color: op.color, width: op.width }, actorName);
+            ShapeKind.Line, { x1: op.x1, y1: op.y1, x2: op.x2, y2: op.y2, color: op.color, width: op.width }, actorName);
           break;
         case 'text':
           createShapeInCanvas({ doc, shapesArray, awareness: aw!, onChange: () => {}, dispose: () => {} } as any,
@@ -206,10 +207,7 @@ export function useCanvasCRDT(
   }, []);
 
   const createStroke = useCallback((points: { x: number; y: number }[], color: string, width: number): string | null => {
-    if (offlineModeRef.current) {
-      queueOp({ type: 'stroke', points, color, width });
-      return null;
-    }
+    if (offlineModeRef.current) setQueuedOps(q => q + 1);
     const doc = docRef.current;
     if (!doc || !roomId) return null;
     const shapesArray = doc.getArray('shapes');
@@ -226,10 +224,7 @@ export function useCanvasCRDT(
   }, [actorName, roomId, pushCreateUndo, queueOp]);
 
   const createRect = useCallback((x: number, y: number, w: number, h: number, color: string): string | null => {
-    if (offlineModeRef.current) {
-      queueOp({ type: 'rect', x, y, w, h, color });
-      return null;
-    }
+    if (offlineModeRef.current) setQueuedOps(q => q + 1);
     const doc = docRef.current;
     if (!doc || !roomId) return null;
     const shapesArray = doc.getArray('shapes');
@@ -246,16 +241,13 @@ export function useCanvasCRDT(
   }, [actorName, roomId, pushCreateUndo, queueOp]);
 
   const createEllipse = useCallback((cx: number, cy: number, rx: number, ry: number, color: string): string | null => {
-    if (offlineModeRef.current) {
-      queueOp({ type: 'ellipse', cx, cy, rx, ry, color });
-      return null;
-    }
+    if (offlineModeRef.current) setQueuedOps(q => q + 1);
     const doc = docRef.current;
     if (!doc || !roomId) return null;
     const shapesArray = doc.getArray('shapes');
     const id = createShapeInCanvas(
       { doc, shapesArray, awareness: awarenessRef.current!, onChange: () => {}, dispose: () => {} } as any,
-      ShapeKind.Rect, { x: cx - rx, y: cy - ry, w: rx * 2, h: ry * 2, color }, actorName
+      ShapeKind.Ellipse, { cx, cy, rx, ry, color }, actorName
     );
     setTimeout(() => {
       const all = getActiveShapes({ doc, shapesArray, awareness: awarenessRef.current!, onChange: () => {}, dispose: () => {} } as any);
@@ -266,16 +258,13 @@ export function useCanvasCRDT(
   }, [actorName, roomId, pushCreateUndo, queueOp]);
 
   const createLine = useCallback((x1: number, y1: number, x2: number, y2: number, color: string, width: number): string | null => {
-    if (offlineModeRef.current) {
-      queueOp({ type: 'line', x1, y1, x2, y2, color, width });
-      return null;
-    }
+    if (offlineModeRef.current) setQueuedOps(q => q + 1);
     const doc = docRef.current;
     if (!doc || !roomId) return null;
     const shapesArray = doc.getArray('shapes');
     const id = createShapeInCanvas(
       { doc, shapesArray, awareness: awarenessRef.current!, onChange: () => {}, dispose: () => {} } as any,
-      ShapeKind.Stroke, { points: [{ x: x1, y: y1 }, { x: x2, y: y2 }], color, width }, actorName
+      ShapeKind.Line, { x1, y1, x2, y2, color, width }, actorName
     );
     setTimeout(() => {
       const all = getActiveShapes({ doc, shapesArray, awareness: awarenessRef.current!, onChange: () => {}, dispose: () => {} } as any);
@@ -286,10 +275,7 @@ export function useCanvasCRDT(
   }, [actorName, roomId, pushCreateUndo, queueOp]);
 
   const createText = useCallback((x: number, y: number, text: string, color: string): string | null => {
-    if (offlineModeRef.current) {
-      queueOp({ type: 'text', x, y, text, color });
-      return null;
-    }
+    if (offlineModeRef.current) setQueuedOps(q => q + 1);
     const doc = docRef.current;
     if (!doc || !roomId) return null;
     const shapesArray = doc.getArray('shapes');
@@ -306,10 +292,7 @@ export function useCanvasCRDT(
   }, [actorName, roomId, pushCreateUndo, queueOp]);
 
   const createImage = useCallback((x: number, y: number, w: number, h: number, src: string): string | null => {
-    if (offlineModeRef.current) {
-      queueOp({ type: 'image', x, y, w, h, src });
-      return null;
-    }
+    if (offlineModeRef.current) setQueuedOps(q => q + 1);
     const doc = docRef.current;
     if (!doc || !roomId) return null;
     const shapesArray = doc.getArray('shapes');
@@ -326,10 +309,7 @@ export function useCanvasCRDT(
   }, [actorName, roomId, pushCreateUndo, queueOp]);
 
   const createNote = useCallback((x: number, y: number, text: string, color: string, bgColor: string): string | null => {
-    if (offlineModeRef.current) {
-      queueOp({ type: 'note', x, y, text, color, bgColor });
-      return null;
-    }
+    if (offlineModeRef.current) setQueuedOps(q => q + 1);
     const doc = docRef.current;
     if (!doc || !roomId) return null;
     const shapesArray = doc.getArray('shapes');
@@ -345,17 +325,14 @@ export function useCanvasCRDT(
     return id;
   }, [actorName, roomId, pushCreateUndo, queueOp]);
 
-  const updateShape = useCallback((id: string, data: Partial<any>, op: EditOp = 'update') => {
+  const updateShape = useCallback((id: string, data: Partial<any>, op: EditOp = 'update', skipHistory = false) => {
     const doc = docRef.current;
     if (!doc) return;
     const shape = shapes.find(s => s.id === id);
-    if (shape) {
+    if (shape && !skipHistory) {
       pushUpdateUndo(id, shape.data, { ...shape.data, ...data });
     }
-    if (offlineModeRef.current) {
-      // offline: state updated on flush
-      return;
-    }
+    if (offlineModeRef.current) setQueuedOps(q => q + 1);
     updateShapeInCanvas(
       { doc, shapesArray: doc.getArray('shapes'), awareness: awarenessRef.current!, onChange: () => {}, dispose: () => {} } as any,
       id, data, actorName, op
@@ -370,15 +347,19 @@ export function useCanvasCRDT(
       pushDeleteUndo(id, shape);
       shapeSnapshotsRef.current.delete(id);
     }
-    if (offlineModeRef.current) {
-      queueOp({ type: 'delete', shapeId: id });
-      return;
-    }
+    if (offlineModeRef.current) setQueuedOps(q => q + 1);
     deleteShapeInCanvas(
       { doc, shapesArray: doc.getArray('shapes'), awareness: awarenessRef.current!, onChange: () => {}, dispose: () => {} } as any,
       id, actorName
     );
   }, [actorName, shapes, pushDeleteUndo, queueOp]);
+
+  const commitShapeHistory = useCallback((id: string, prevData: any) => {
+    const shape = shapes.find(s => s.id === id);
+    if (shape) {
+      pushUpdateUndo(id, prevData, shape.data);
+    }
+  }, [shapes, pushUpdateUndo]);
 
   const setCursor = useCallback((x: number, y: number) => {
     awarenessRef.current?.setLocalStateField('cursor', { x, y });
@@ -486,10 +467,7 @@ export function useCanvasCRDT(
     setConnectionState('connecting');
     providerRef.current?.connect();
     console.log('[canvas] Simulating online mode — WebRTC reconnecting');
-    setTimeout(() => {
-      flushQueue();
-    }, 400);
-  }, [flushQueue]);
+  }, []);
 
   const triggerReconnect = useCallback(() => {
     console.log('[canvas] Manual reconnect triggered');
@@ -556,6 +534,13 @@ export function useCanvasCRDT(
     });
     providerRef.current = provider;
 
+    provider.on('synced', (state: any) => {
+      const isSynced = typeof state === 'object' ? state?.synced : state;
+      if (isSynced && !offlineModeRef.current) {
+        setTimeout(() => flushQueueRef.current(), 100);
+      }
+    });
+
     const indexeddb = new IndexeddbPersistence(`crdt-canvas-${roomId}`, doc);
     indexeddbRef.current = indexeddb;
 
@@ -592,12 +577,6 @@ export function useCanvasCRDT(
         setConnected(true);
         setConnectionState(prev => prev === 'connecting' ? 'syncing' : 'connected');
         setTimeout(() => flushQueueRef.current(), 300);
-      } else if (count === 0 && !offlineModeRef.current) {
-        setConnected(false);
-        setConnectionState('disconnected');
-        if (pendingOpsRef.current.length > 0) {
-          setQueuedOps(pendingOpsRef.current.length);
-        }
       }
       setRoomID(roomId);
     });
@@ -729,6 +708,7 @@ export function useCanvasCRDT(
     simulateOffline,
     simulateOnline,
     triggerReconnect,
+    commitShapeHistory,
     doc: docState || docRef.current,
   };
 }

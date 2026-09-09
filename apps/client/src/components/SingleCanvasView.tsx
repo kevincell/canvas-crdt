@@ -84,21 +84,22 @@ export function SingleCanvasView({
     simulateOffline,
     simulateOnline,
     triggerReconnect,
+    commitShapeHistory,
     doc,
   } = useCanvasCRDT(actorName, roomId, activeColor);
 
-  const handleShapeMoved = useCallback((id: string, dx: number, dy: number) => {
+  const handleShapeMoved = useCallback((id: string, dx: number, dy: number, skipHistory = false) => {
     const shape = shapes.find(s => s.id === id);
     if (shape) {
       const data = shape.data as { x?: number; y?: number };
       const newX = (data.x ?? 0) + dx;
       const newY = (data.y ?? 0) + dy;
-      updateShape(id, { x: newX, y: newY }, 'move');
+      updateShape(id, { x: newX, y: newY }, 'move', skipHistory);
     }
   }, [shapes, updateShape]);
 
-  const handleShapeResized = useCallback((id: string, data: Partial<any>, op: 'resize' | 'move' | 'update' = 'resize') => {
-    updateShape(id, data, op);
+  const handleShapeResized = useCallback((id: string, data: Partial<any>, op: 'resize' | 'move' | 'update' = 'resize', skipHistory = false) => {
+    updateShape(id, data, op, skipHistory);
   }, [updateShape]);
 
   // Handle image upload from file input
@@ -370,9 +371,10 @@ export function SingleCanvasView({
             onTextSubmit={(x, y, text, c) => { createText(x, y, text, c); sound.playPop(); }}
             onImageAdd={(x, y, w, h, src) => { createImage(x, y, w, h, src); sound.playPop(); }}
             onNoteAdd={(x, y, text, c, bg) => { createNote(x, y, text, c, bg); sound.playPop(); }}
-            onDelete={id => { deleteShape(id); sound.playClick(); }}
+            onDelete={deleteShape}
             onShapeMoved={handleShapeMoved}
             onShapeResized={handleShapeResized}
+            onShapeHistoryCommit={commitShapeHistory}
             onZoomChange={setCanvasScale}
             onImageDrop={(x, y, w, h, src) => { createImage(x, y, w, h, src); sound.playPop(); }}
             onCursorMove={setCursor}

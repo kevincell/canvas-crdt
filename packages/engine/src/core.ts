@@ -10,6 +10,8 @@
 export enum ShapeKind {
   Stroke = 'stroke',
   Rect = 'rect',
+  Ellipse = 'ellipse',
+  Line = 'line',
   Text = 'text',
   Image = 'image',
   Note = 'note',
@@ -43,6 +45,25 @@ export type TextShape = {
   color: string;
 };
 
+export type EllipseShape = {
+  kind: ShapeKind.Ellipse;
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
+  color: string;
+};
+
+export type LineShape = {
+  kind: ShapeKind.Line;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: string;
+  width: number;
+};
+
 export type ImageShape = {
   kind: ShapeKind.Image;
   x: number;
@@ -63,7 +84,7 @@ export type NoteShape = {
   bgColor: string;
 };
 
-export type ShapeData = StrokeShape | RectShape | TextShape | ImageShape | NoteShape;
+export type ShapeData = StrokeShape | RectShape | EllipseShape | LineShape | TextShape | ImageShape | NoteShape;
 
 // ─── Shape (with CRDT metadata) ─────────────────────────────────────────────
 
@@ -133,6 +154,12 @@ export function shapeBBox(s: Shape): { minX: number; minY: number; maxX: number;
   }
   if (d.kind === ShapeKind.Rect) {
     return { minX: d.x, minY: d.y, maxX: d.x + d.w, maxY: d.y + d.h };
+  }
+  if (d.kind === ShapeKind.Ellipse) {
+    return { minX: d.cx - d.rx, minY: d.cy - d.ry, maxX: d.cx + d.rx, maxY: d.cy + d.ry };
+  }
+  if (d.kind === ShapeKind.Line) {
+    return { minX: Math.min(d.x1, d.x2), minY: Math.min(d.y1, d.y2), maxX: Math.max(d.x1, d.x2), maxY: Math.max(d.y1, d.y2) };
   }
   if (d.kind === ShapeKind.Text) {
     const estW = d.text.length * 9;
@@ -262,7 +289,7 @@ export function mergeShapes(base: Shape, edits: Shape[]): Shape {
 
   const d = base.data;
 
-  if (d.kind === ShapeKind.Rect || d.kind === ShapeKind.Image || d.kind === ShapeKind.Note) {
+  if (d.kind === ShapeKind.Rect || d.kind === ShapeKind.Ellipse || d.kind === ShapeKind.Line || d.kind === ShapeKind.Image || d.kind === ShapeKind.Note) {
     const bbox = edits.reduce(
       (acc, e) => {
         if (e.data.kind !== d.kind) return acc;
@@ -276,6 +303,24 @@ export function mergeShapes(base: Shape, edits: Shape[]): Shape {
         data: { ...d, x: bbox.minX, y: bbox.minY, w: bbox.maxX - bbox.minX, h: bbox.maxY - bbox.minY } as RectShape,
         updatedAt: Date.now(),
         vector: edits.reduce((v, e) => ({ ...v, ...e.vector }), base.vector),
+      };
+    }
+    if (d.kind === ShapeKind.Ellipse) {
+      return {
+        ...base,
+        data: { ...d, cx: (bbox.minX + bbox.maxX) / 2, cy: (bbox.minY + bbox.maxY) / 2, rx: (bbox.maxX - bbox.minX) / 2, ry: (bbox.maxY - bbox.minY) / 2 } as EllipseShape,
+        updatedAt: Date.now(),
+        vector: edits.reduce((v, e) => ({ ...v, ...e.vector }), base.vector),
+      };
+    }
+    if (d.kind === ShapeKind.Line) {
+      // Just keep LWW for endpoints but maybe apply bbox bounds in a smart way. For simplicity, LWW:
+      const latest = edits.reduce((a, b) => (a.updatedAt > b.updatedAt ? a : b), edits[0]);
+      return {
+        ...base,
+        data: { ...latest.data } as LineShape,
+        updatedAt: Date.now(),
+        vector: { ...base.vector, ...latest.vector },
       };
     }
     if (d.kind === ShapeKind.Image) {

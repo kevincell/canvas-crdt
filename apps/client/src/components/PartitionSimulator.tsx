@@ -12,48 +12,63 @@ export function PartitionSimulator({
   return (
     <div style={{
       position: 'absolute',
-      top: 60,
-      right: 16,
-      background: 'rgba(30, 30, 46, 0.95)',
-      border: '1px solid rgba(124, 58, 237, 0.4)',
-      borderRadius: 10,
-      padding: '12px 14px',
+      top: 70,
+      right: 20,
+      background: 'rgba(15, 15, 20, 0.95)',
+      border: '1px solid rgba(229, 57, 53, 0.5)',
+      borderRadius: 12,
+      padding: '16px',
       zIndex: 100,
-      backdropFilter: 'blur(12px)',
-      minWidth: 180,
+      backdropFilter: 'blur(16px)',
+      minWidth: 260,
+      boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 0 15px rgba(229, 57, 53, 0.2)',
     }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: '#a78bfa', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-        Partition Simulator
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#e53935', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Network Simulator
+        </div>
+        <button onClick={() => setEnabled(false)} style={{ background: 'transparent', color: '#888', border: 'none', cursor: 'pointer', fontSize: 16 }}>
+          ✕
+        </button>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+
+      <div style={{ fontSize: 12, color: '#e2e2f0', marginBottom: 16, lineHeight: 1.4 }}>
+        Test how the CRDT engine resolves conflicts when peers disconnect and edit offline.
+      </div>
+
+      <div style={{ background: 'rgba(229, 57, 53, 0.1)', padding: '10px', borderRadius: 6, marginBottom: 16, border: '1px dashed rgba(229, 57, 53, 0.3)' }}>
+        <div style={{ fontSize: 11, color: '#ff5252', fontWeight: 600, marginBottom: 4 }}>
+          ⚠️ LOCAL TESTING TIP
+        </div>
+        <div style={{ fontSize: 11, color: '#a3a3a3', lineHeight: 1.3 }}>
+          If testing on one computer, open your second peer in an <b>Incognito Window</b>. Otherwise, tabs will still sync instantly bypassing the network via shared IndexedDB/Local Storage!
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <button onClick={() => onSimulate('network-split')} style={btnStyle}>
-          🌐 Network Split
+          <span style={{ fontSize: 16 }}>🔌</span> Simulate Offline (Disconnect)
         </button>
-        <button onClick={() => onSimulate('reconnect')} style={btnStyle}>
-          🔗 Reconnect
+        <button onClick={() => onSimulate('reconnect')} style={{ ...btnStyle, borderColor: 'rgba(16, 185, 129, 0.4)', background: 'rgba(16, 185, 129, 0.1)' }}>
+          <span style={{ fontSize: 16 }}>🔗</span> Reconnect Network
         </button>
-        <button onClick={() => onSimulate('offline-edit')} style={btnStyle}>
-          ✏️ Offline Edit
-        </button>
-        <button onClick={() => setEnabled(false)} style={{ ...btnStyle, color: '#8888a8' }}>
-          ✕ Close
-        </button>
-      </div>
-      <div style={{ fontSize: 10, color: '#555570', marginTop: 8, fontStyle: 'italic' }}>
-        Simulates P2P network partitions to test CRDT convergence and offline sync.
       </div>
     </div>
   );
 }
 
 const btnStyle: React.CSSProperties = {
-  padding: '5px 10px',
-  fontSize: 12,
-  background: 'rgba(124, 58, 237, 0.2)',
-  border: '1px solid rgba(124, 58, 237, 0.4)',
-  borderRadius: 6,
-  color: '#c4b5fd',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '10px',
+  padding: '10px 14px',
+  fontSize: 13,
+  fontWeight: 500,
+  background: 'rgba(229, 57, 53, 0.15)',
+  border: '1px solid rgba(229, 57, 53, 0.4)',
+  borderRadius: 8,
+  color: '#ffffff',
   cursor: 'pointer',
   textAlign: 'left',
-  transition: 'all 0.15s',
+  transition: 'all 0.15s ease',
 };

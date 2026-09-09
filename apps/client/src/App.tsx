@@ -45,12 +45,12 @@ export default function App() {
   }, []);
 
   return (
-    <Box sx={{
+    <Box className="pewdiepie-bg" sx={{
       width: '100vw',
       height: '100vh',
       display: 'flex',
       flexDirection: 'column',
-      background: '#0d0d14',
+      background: 'transparent',
       overflow: 'hidden',
     }}>
       {mode === 'join' && (

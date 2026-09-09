@@ -11,8 +11,8 @@ import './index.css'
 const theme = createTheme({
   palette: {
     mode: 'dark',
-    primary: { main: '#7c3aed' },
-    background: { default: '#0f0f14', paper: '#1e1e2e' },
+    primary: { main: '#e53935' },
+    background: { default: '#0a0a0a', paper: '#141414' },
   },
   typography: {
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",

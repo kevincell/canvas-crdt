@@ -32,10 +32,11 @@ export interface CanvasRenderProps {
   onTextSubmit: (x: number, y: number, text: string, color: string) => void;
   onImageAdd: (x: number, y: number, w: number, h: number, src: string) => void;
   onNoteAdd: (x: number, y: number, text: string, color: string, bgColor: string) => void;
-  onDelete: (id: string) => void;
-  onShapeMoved: (id: string, dx: number, dy: number) => void;
-  onShapeResized: (id: string, data: Partial<any>, op?: 'resize' | 'move' | 'update') => void;
-  onZoomChange: (scale: number) => void;
+  onDelete?: (id: string) => void;
+  onShapeMoved?: (id: string, dx: number, dy: number, skipHistory?: boolean) => void;
+  onShapeResized?: (id: string, data: Partial<any>, op?: 'resize' | 'move' | 'update', skipHistory?: boolean) => void;
+  onShapeHistoryCommit?: (id: string, prevData: any) => void;
+  onZoomChange?: (scale: number) => void;
   onImageDrop: (x: number, y: number, w: number, h: number, src: string) => void;
   onCursorMove?: (x: number, y: number) => void;
 }
@@ -61,6 +62,7 @@ export function CanvasRenderer({
   onDelete,
   onShapeMoved,
   onShapeResized,
+  onShapeHistoryCommit,
   onZoomChange,
   onImageDrop,
   onCursorMove,
@@ -87,7 +89,8 @@ export function CanvasRenderer({
   const [dragHandle, setDragHandle] = useState<number | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number; offX: number; offY: number } | null>(null);
-  const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
+  const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const dragStartDataRef = useRef<any>(null);
 
   // Text / note input overlay
   const [textOverlay, setTextOverlay] = useState<{
@@ -132,24 +135,30 @@ export function CanvasRenderer({
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  const render = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  const rafIdRef = useRef<number | null>(null);
 
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
+  const render = useCallback(() => {
+    if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
+    rafIdRef.current = requestAnimationFrame(() => {
+      rafIdRef.current = null;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
 
     const w = rect.width;
     const h = rect.height;
     const { scale: s, offset } = transformRef.current;
 
     // Background
-    ctx.fillStyle = '#12121a';
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(10, 10, 10, 0.6)';
     ctx.fillRect(0, 0, w, h);
 
     // Grid
@@ -209,6 +218,30 @@ export function CanvasRenderer({
         if (isConflict) ctx.setLineDash([4 / scale, 4 / scale]);
         ctx.fillRect(d.x, d.y, d.w, d.h);
         ctx.strokeRect(d.x, d.y, d.w, d.h);
+        ctx.setLineDash([]);
+      }
+
+      if (d.kind === ShapeKind.Ellipse) {
+        ctx.fillStyle = d.color + '22';
+        ctx.strokeStyle = d.color;
+        ctx.lineWidth = (isSel ? 2 : 1.5) / scale;
+        if (isConflict) ctx.setLineDash([4 / scale, 4 / scale]);
+        ctx.beginPath();
+        ctx.ellipse(d.cx, d.cy, d.rx, d.ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      if (d.kind === ShapeKind.Line) {
+        ctx.strokeStyle = d.color;
+        ctx.lineWidth = ((d.width as number) ?? strokeWidthRef.current) / scale;
+        ctx.lineCap = 'round';
+        if (isConflict) ctx.setLineDash([4 / scale, 4 / scale]);
+        ctx.beginPath();
+        ctx.moveTo(d.x1, d.y1);
+        ctx.lineTo(d.x2, d.y2);
+        ctx.stroke();
         ctx.setLineDash([]);
       }
 
@@ -356,6 +389,7 @@ export function CanvasRenderer({
       ctx.font = '11px Inter, sans-serif';
       ctx.fillText(`📜 History: ${historyStep}/${history.totalSteps}`, 18, 28);
     }
+    });
   }, [shapes, conflicts, remoteCursors, history, historyStep, scale]);
 
   useEffect(() => {
@@ -462,7 +496,10 @@ export function CanvasRenderer({
       if (handle !== null) {
         setDragHandle(handle);
         const shape = shapesRef.current.find(s => s.id === selectedIdRef.current && !s.deleted);
-        if (shape) setDragOffset({ x: pos.x, y: pos.y });
+        if (shape) {
+          dragOffsetRef.current = { x: pos.x, y: pos.y };
+          dragStartDataRef.current = { ...shape.data };
+        }
         return;
       }
       let hit: Shape | null = null;
@@ -477,7 +514,8 @@ export function CanvasRenderer({
       }
       if (hit) {
         setSelectedId(hit.id);
-        setDragOffset({ x: pos.x, y: pos.y });
+        dragOffsetRef.current = { x: pos.x, y: pos.y };
+        dragStartDataRef.current = { ...hit.data };
       } else {
         setSelectedId(null);
       }
@@ -490,7 +528,7 @@ export function CanvasRenderer({
         if (s.deleted) continue;
         const b = shapeBBox(s);
         if (pos.x >= b.minX - 12 && pos.x <= b.maxX + 12 && pos.y >= b.minY - 12 && pos.y <= b.maxY + 12) {
-          onDelete(s.id);
+          onDelete?.(s.id);
           return;
         }
       }
@@ -518,7 +556,7 @@ export function CanvasRenderer({
       startPoint: pos,
       currentPoints: [pos],
     };
-  }, [getWorldPos, onDelete]);
+  }, [getWorldPos, getHandleAt, onDelete]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const pos = getWorldPos(e);
@@ -542,33 +580,73 @@ export function CanvasRenderer({
       const shape = shapesRef.current.find(s => s.id === selectedIdRef.current && !s.deleted);
       if (!shape) return;
       const b = shapeBBox(shape);
-      const dx = pos.x - (dragOffset?.x ?? pos.x);
-      const dy = pos.y - (dragOffset?.y ?? pos.y);
+      const dx = pos.x - (dragOffsetRef.current?.x ?? pos.x);
+      const dy = pos.y - (dragOffsetRef.current?.y ?? pos.y);
       let newData: any = { ...shape.data };
+      let newBBox = { minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY };
+      
       if (dragHandle === 0) {
-        newData.x = b.minX + dx; newData.y = b.minY + dy;
-        newData.w = Math.max(20, b.maxX - b.minX - dx); newData.h = Math.max(20, b.maxY - b.minY - dy);
+        newBBox.minX += dx; newBBox.minY += dy;
       } else if (dragHandle === 1) {
-        newData.y = b.minY + dy;
-        newData.w = Math.max(20, b.maxX - b.minX + dx); newData.h = Math.max(20, b.maxY - b.minY - dy);
+        newBBox.maxX += dx; newBBox.minY += dy;
       } else if (dragHandle === 2) {
-        newData.x = b.minX + dx;
-        newData.w = Math.max(20, b.maxX - b.minX - dx); newData.h = Math.max(20, b.maxY - b.minY + dy);
+        newBBox.minX += dx; newBBox.maxY += dy;
       } else if (dragHandle === 3) {
-        newData.w = Math.max(20, b.maxX - b.minX + dx); newData.h = Math.max(20, b.maxY - b.minY + dy);
+        newBBox.maxX += dx; newBBox.maxY += dy;
       }
-      onShapeResized(selectedIdRef.current, newData, 'resize');
-      setDragOffset({ x: pos.x, y: pos.y });
+
+      // Enforce minimum size of 10x10
+      if (newBBox.maxX - newBBox.minX < 10) {
+        if (dragHandle === 0 || dragHandle === 2) newBBox.minX = newBBox.maxX - 10;
+        else newBBox.maxX = newBBox.minX + 10;
+      }
+      if (newBBox.maxY - newBBox.minY < 10) {
+        if (dragHandle === 0 || dragHandle === 1) newBBox.minY = newBBox.maxY - 10;
+        else newBBox.maxY = newBBox.minY + 10;
+      }
+
+      const scaleX = (b.maxX - b.minX) === 0 ? 1 : (newBBox.maxX - newBBox.minX) / (b.maxX - b.minX);
+      const scaleY = (b.maxY - b.minY) === 0 ? 1 : (newBBox.maxY - newBBox.minY) / (b.maxY - b.minY);
+
+      if (shape.kind === ShapeKind.Rect || shape.kind === ShapeKind.Image) {
+        newData.x = newBBox.minX;
+        newData.y = newBBox.minY;
+        newData.w = newBBox.maxX - newBBox.minX;
+        newData.h = newBBox.maxY - newBBox.minY;
+      } else if (shape.kind === ShapeKind.Ellipse) {
+        newData.cx = (newBBox.minX + newBBox.maxX) / 2;
+        newData.cy = (newBBox.minY + newBBox.maxY) / 2;
+        newData.rx = (newBBox.maxX - newBBox.minX) / 2;
+        newData.ry = (newBBox.maxY - newBBox.minY) / 2;
+      } else if (shape.kind === ShapeKind.Line) {
+        const isX1Left = shape.data.x1 <= shape.data.x2;
+        const isY1Top = shape.data.y1 <= shape.data.y2;
+        newData.x1 = isX1Left ? newBBox.minX : newBBox.maxX;
+        newData.x2 = isX1Left ? newBBox.maxX : newBBox.minX;
+        newData.y1 = isY1Top ? newBBox.minY : newBBox.maxY;
+        newData.y2 = isY1Top ? newBBox.maxY : newBBox.minY;
+      } else if (shape.kind === ShapeKind.Stroke) {
+        newData.points = shape.data.points.map((p: any) => ({
+          x: newBBox.minX + (p.x - b.minX) * scaleX,
+          y: newBBox.minY + (p.y - b.minY) * scaleY
+        }));
+      } else if (shape.kind === ShapeKind.Text || shape.kind === ShapeKind.Note) {
+        newData.x = newBBox.minX;
+        newData.y = newBBox.minY;
+      }
+
+      onShapeResized?.(selectedIdRef.current, newData, 'resize', true);
+      dragOffsetRef.current = { x: pos.x, y: pos.y };
       render();
       return;
     }
 
     // Drag shape
-    if (selectedIdRef.current && (e.buttons & 1) && toolRef.current === 'select' && dragOffset) {
-      const dx = pos.x - dragOffset.x;
-      const dy = pos.y - dragOffset.y;
-      onShapeMoved(selectedIdRef.current, dx, dy);
-      setDragOffset({ x: pos.x, y: pos.y });
+    if (selectedIdRef.current && (e.buttons & 1) && toolRef.current === 'select' && dragOffsetRef.current) {
+      const dx = pos.x - dragOffsetRef.current.x;
+      const dy = pos.y - dragOffsetRef.current.y;
+      onShapeMoved?.(selectedIdRef.current, dx, dy, true);
+      dragOffsetRef.current = { x: pos.x, y: pos.y };
       render();
       return;
     }
@@ -599,7 +677,7 @@ export function CanvasRenderer({
       const cvs3 = canvasRef.current;
       if (cvs3) cvs3.style.cursor = toolRef.current === 'eraser' ? 'crosshair' : 'crosshair';
     }
-  }, [isPanning, panStart, dragHandle, dragOffset, getWorldPos, getHandleAt, onShapeMoved, onShapeResized, render]);
+  }, [isPanning, panStart, dragHandle, getWorldPos, getHandleAt, onShapeMoved, onShapeResized, render]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     const pos = getWorldPos(e);
@@ -611,12 +689,20 @@ export function CanvasRenderer({
     }
 
     if (dragHandle !== null) {
+      if (selectedIdRef.current && dragStartDataRef.current) {
+        onShapeHistoryCommit?.(selectedIdRef.current, dragStartDataRef.current);
+      }
       setDragHandle(null);
+      dragStartDataRef.current = null;
       return;
     }
 
-    if (dragOffset && selectedIdRef.current && toolRef.current === 'select') {
-      setDragOffset(null);
+    if (dragOffsetRef.current && selectedIdRef.current && toolRef.current === 'select') {
+      if (dragStartDataRef.current) {
+        onShapeHistoryCommit?.(selectedIdRef.current, dragStartDataRef.current);
+      }
+      dragOffsetRef.current = null;
+      dragStartDataRef.current = null;
       return;
     }
 
@@ -656,7 +742,7 @@ export function CanvasRenderer({
 
     drawingRef.current = { active: false, kind: null, startPoint: null, currentPoints: [] };
     render();
-  }, [getWorldPos, isPanning, dragHandle, dragOffset, onStrokeEnd, onLineEnd, onRectEnd, onEllipseEnd, render]);
+  }, [getWorldPos, isPanning, dragHandle, onStrokeEnd, onLineEnd, onRectEnd, onEllipseEnd, render]);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();

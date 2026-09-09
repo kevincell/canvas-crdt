@@ -141,23 +141,23 @@ crdt-canvas/
 ### Prerequisites
 
 - Node.js >= 20
-- npm >= 10
+- pnpm >= 8
 
 ### Install
 
 ```bash
 cd crdt-canvas
-npm install
+pnpm install
 ```
 
 ### Run
 
 ```bash
 # Terminal 1: Start signaling server
-npm run dev:server
+pnpm run dev:server
 
 # Terminal 2: Start client
-npm run dev:client
+pnpm run dev:client
 ```
 
 Open two browser tabs to the same room ID to test collaboration.
@@ -166,10 +166,10 @@ Open two browser tabs to the same room ID to test collaboration.
 
 ```bash
 # Run engine tests
-npm run test -w packages/engine
+pnpm run test --filter @crdt-canvas/engine
 
 # Type checking
-npm run typecheck
+pnpm run typecheck
 ```
 
 ## Academic Framing

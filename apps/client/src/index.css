@@ -5,21 +5,21 @@
 }
 
 :root {
-  --bg: #0f0f14;
-  --bg-secondary: #1a1a24;
-  --bg-tertiary: #252535;
-  --surface: #1e1e2e;
-  --border: #2a2a3d;
-  --text: #e2e2f0;
-  --text-muted: #8888a8;
-  --accent: #7c3aed;
-  --accent-light: #a78bfa;
+  --bg: #0a0a0a;
+  --bg-secondary: #141414;
+  --bg-tertiary: #1f1f1f;
+  --surface: #141414;
+  --border: #333333;
+  --text: #ffffff;
+  --text-muted: #a3a3a3;
+  --accent: #e53935;
+  --accent-light: #ff5252;
   --danger: #ef4444;
   --warning: #f59e0b;
   --success: #10b981;
   --info: #3b82f6;
-  --canvas-bg: #12121a;
-  --canvas-grid: rgba(255, 255, 255, 0.03);
+  --canvas-bg: #0a0a0a;
+  --canvas-grid: rgba(229, 57, 53, 0.08);
 }
 
 html, body, #root {
@@ -90,11 +90,25 @@ button:not(:disabled):hover {
 }
 
 .glow-purple {
-  box-shadow: 0 0 20px rgba(124, 58, 237, 0.35);
+  box-shadow: 0 0 20px rgba(229, 57, 53, 0.35);
 }
 
 .glow-emerald {
   box-shadow: 0 0 16px rgba(16, 185, 129, 0.35);
+}
+
+.pewdiepie-bg {
+  background-image: repeating-radial-gradient(
+    circle at 0 0,
+    transparent 0,
+    #0a0a0a 10px
+  ), repeating-linear-gradient(
+    -45deg,
+    rgba(229, 57, 53, 0.06),
+    rgba(229, 57, 53, 0.06) 10px,
+    transparent 10px,
+    transparent 20px
+  );
 }
 
 /* Animations */
