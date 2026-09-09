@@ -18,6 +18,10 @@ import {
   getActiveShapes,
   buildMergeHistory,
   detectConflicts,
+  detectCanvasConflicts,
+  resolveConflictInCanvas,
+  computeChangeEvents,
+  type EditOp,
 } from '@crdt-canvas/engine';
 
 // ── Connection states ────────────────────────────────────────────────────────
@@ -68,10 +72,11 @@ export interface CanvasHooks {
   createText: (x: number, y: number, text: string, color: string) => string | null;
   createImage: (x: number, y: number, w: number, h: number, src: string) => string | null;
   createNote: (x: number, y: number, text: string, color: string, bgColor: string) => string | null;
-  updateShape: (id: string, data: Partial<any>) => void;
+  updateShape: (id: string, data: Partial<any>, op?: EditOp) => void;
   deleteShape: (id: string) => void;
   setCursor: (x: number, y: number) => void;
   setParticipantName: (name: string) => void;
+  resolveConflict: (shapeId: string, action: 'merge' | 'keep-local' | 'keep-remote') => void;
 
   // Chat
   sendMessage: (text: string) => void;
@@ -87,7 +92,11 @@ export interface CanvasHooks {
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
-export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
+export function useCanvasCRDT(
+  actorName: string,
+  roomId: string,
+  actorColor: string = '#7c3aed'
+): CanvasHooks {
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [history, setHistory] = useState<MergeHistory | null>(null);
@@ -99,13 +108,14 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
   const [queuedOps, setQueuedOps] = useState(0);
   const [remoteCursors, setRemoteCursors] = useState(new Map<string, { x: number; y: number; color: string; name: string }>());
   const [participants, setParticipants] = useState<Array<{ id: string; name: string; color: string }>>([]);
+  const [docState, setDocState] = useState<Y.Doc | null>(null);
 
   const docRef = useRef<Y.Doc | null>(null);
   const providerRef = useRef<WebrtcProvider | null>(null);
   const indexeddbRef = useRef<any>(null);
   const awarenessRef = useRef<Awareness | null>(null);
   const historyEventsRef = useRef<any[]>([]);
-  const lastShapeCountRef = useRef(0);
+  const previousShapesRef = useRef<Shape[]>([]);
 
   // Undo / redo stacks
   const undoStackRef = useRef<any[]>([]);
@@ -115,6 +125,9 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
   // ── Offline simulation ──────────────────────────────────────────────────
   const offlineModeRef = useRef(false);
   const pendingOpsRef = useRef<QueuedOp[]>([]);
+  const actorColorRef = useRef(actorColor);
+  actorColorRef.current = actorColor;
+  const flushQueueRef = useRef<() => void>(() => {});
 
   // ── Operation queue ─────────────────────────────────────────────────────
 
@@ -167,6 +180,7 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
     }
     console.log(`[canvas] Flushed ${ops.length} queued operation(s) on reconnect`);
   }, [actorName]);
+  flushQueueRef.current = flushQueue;
 
   const queueOp = useCallback((op: QueuedOp) => {
     pendingOpsRef.current.push(op);
@@ -190,8 +204,6 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
     undoStackRef.current.push({ type: 'update', shapeId, prevData: prev, nextData: next });
     redoStackRef.current = [];
   }, []);
-
-  const isOnline = useCallback(() => !offlineModeRef.current && providerRef.current?.room?.webrtcConns?.size ? true : !offlineModeRef.current, []);
 
   const createStroke = useCallback((points: { x: number; y: number }[], color: string, width: number): string | null => {
     if (offlineModeRef.current) {
@@ -253,7 +265,7 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
     return id;
   }, [actorName, roomId, pushCreateUndo, queueOp]);
 
-  const createLine = useCallback((x1: number, y1: number, x2: number, y2: number, color: string, width: number = 2): string | null => {
+  const createLine = useCallback((x1: number, y1: number, x2: number, y2: number, color: string, width: number): string | null => {
     if (offlineModeRef.current) {
       queueOp({ type: 'line', x1, y1, x2, y2, color, width });
       return null;
@@ -323,7 +335,7 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
     const shapesArray = doc.getArray('shapes');
     const id = createShapeInCanvas(
       { doc, shapesArray, awareness: awarenessRef.current!, onChange: () => {}, dispose: () => {} } as any,
-      ShapeKind.Note, { x, y, text, color, bgColor }, actorName
+      ShapeKind.Note, { x, y, w: 160, h: 140, text, color, bgColor }, actorName
     );
     setTimeout(() => {
       const all = getActiveShapes({ doc, shapesArray, awareness: awarenessRef.current!, onChange: () => {}, dispose: () => {} } as any);
@@ -333,17 +345,20 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
     return id;
   }, [actorName, roomId, pushCreateUndo, queueOp]);
 
-  const updateShape = useCallback((id: string, data: Partial<any>) => {
+  const updateShape = useCallback((id: string, data: Partial<any>, op: EditOp = 'update') => {
     const doc = docRef.current;
     if (!doc) return;
-    const shapesArray = doc.getArray('shapes');
-    const current = shapes.find(s => s.id === id);
-    if (current) {
-      pushUpdateUndo(id, current.data, { ...current.data, ...data } as ShapeData);
+    const shape = shapes.find(s => s.id === id);
+    if (shape) {
+      pushUpdateUndo(id, shape.data, { ...shape.data, ...data });
+    }
+    if (offlineModeRef.current) {
+      // offline: state updated on flush
+      return;
     }
     updateShapeInCanvas(
-      { doc, shapesArray, awareness: awarenessRef.current!, onChange: () => {}, dispose: () => {} } as any,
-      id, data, actorName
+      { doc, shapesArray: doc.getArray('shapes'), awareness: awarenessRef.current!, onChange: () => {}, dispose: () => {} } as any,
+      id, data, actorName, op
     );
   }, [actorName, shapes, pushUpdateUndo]);
 
@@ -372,6 +387,15 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
   const setParticipantName = useCallback((name: string) => {
     awarenessRef.current?.setLocalStateField('actor', name);
   }, []);
+
+  const resolveConflict = useCallback((shapeId: string, action: 'merge' | 'keep-local' | 'keep-remote') => {
+    const doc = docRef.current;
+    if (!doc) return;
+    resolveConflictInCanvas(
+      { doc, shapesArray: doc.getArray('shapes'), awareness: awarenessRef.current!, onChange: () => {}, dispose: () => {} } as any,
+      shapeId, action, actorName
+    );
+  }, [actorName]);
 
   // ── Chat ────────────────────────────────────────────────────────────────
 
@@ -415,7 +439,7 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
         );
       }
     }
-  }, [deleteShape, actorName, updateShape]);
+  }, [deleteShape, actorName]);
 
   const redo = useCallback(() => {
     const op = redoStackRef.current.pop();
@@ -452,25 +476,31 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
   const simulateOffline = useCallback(() => {
     offlineModeRef.current = true;
     setConnectionState('offline');
-    console.log('[canvas] Simulating offline mode — operations will be queued');
+    setConnected(false);
+    providerRef.current?.disconnect();
+    console.log('[canvas] Simulating offline mode — WebRTC disconnected & operations queued');
   }, []);
 
   const simulateOnline = useCallback(() => {
     offlineModeRef.current = false;
-    if (providerRef.current?.room?.webrtcConns?.size) {
-      setConnectionState('syncing');
-      setTimeout(() => flushQueue(), 200);
-    } else {
-      setConnectionState('disconnected');
-      setQueuedOps(pendingOpsRef.current.length);
-    }
-    console.log('[canvas] Simulating online mode — flushing queue');
+    setConnectionState('connecting');
+    providerRef.current?.connect();
+    console.log('[canvas] Simulating online mode — WebRTC reconnecting');
+    setTimeout(() => {
+      flushQueue();
+    }, 400);
   }, [flushQueue]);
 
   const triggerReconnect = useCallback(() => {
     console.log('[canvas] Manual reconnect triggered');
     setConnectionState('connecting');
+    providerRef.current?.connect();
   }, []);
+
+  // Update color on awareness when actorColor changes
+  useEffect(() => {
+    awarenessRef.current?.setLocalStateField('color', actorColor);
+  }, [actorColor]);
 
   // ── Init ────────────────────────────────────────────────────────────────
 
@@ -479,10 +509,12 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
 
     const doc = new Y.Doc();
     docRef.current = doc;
+    setDocState(doc);
 
     const awareness = new Awareness(doc);
     awarenessRef.current = awareness;
     awareness.setLocalStateField('actor', actorName);
+    awareness.setLocalStateField('color', actorColor);
     awareness.setLocalStateField('cursor', { x: 0, y: 0 });
     awareness.setLocalStateField('handId', (typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
@@ -498,23 +530,29 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
 
     // Fetch local IP and build signaling URL
     let signalingUrl = import.meta.env.VITE_SIGNALING_URL;
+    let fetchedIP = '';
     try {
       const resp = await fetch('/api/ip');
       const data = await resp.json();
-      const fetchedIP = data.ip || data.localIP || '';
+      fetchedIP = data.ip || data.localIP || '';
       setLocalIP(fetchedIP);
-      if (!signalingUrl) {
-        signalingUrl = `ws://${fetchedIP || 'localhost'}:3001/ws`;
-      }
     } catch {
       setLocalIP('');
-      if (!signalingUrl) {
-        signalingUrl = `ws://localhost:3001/ws`;
-      }
+    }
+
+    const host = window.location.hostname || 'localhost';
+    const targetHost = (host && host !== 'localhost' && host !== '127.0.0.1') ? host : (fetchedIP || 'localhost');
+    const query = actorName ? `?name=${encodeURIComponent(actorName)}` : '';
+    let finalSignalingUrl = signalingUrl;
+    if (finalSignalingUrl) {
+      finalSignalingUrl = finalSignalingUrl.includes('?') ? `${finalSignalingUrl}&name=${encodeURIComponent(actorName)}` : `${finalSignalingUrl}${query}`;
+    } else {
+      finalSignalingUrl = `ws://${targetHost}:3001/ws${query}`;
     }
 
     const provider = new WebrtcProvider(roomId, doc, {
-      signaling: [signalingUrl!],
+      signaling: [finalSignalingUrl],
+      awareness,
     });
     providerRef.current = provider;
 
@@ -524,6 +562,7 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
     // ── Connection state machine ─────────────────────────────────────────
     provider.on('status', (status: any) => {
       const state = typeof status === 'object' ? status?.status : status;
+      if (offlineModeRef.current) return;
       switch (state) {
         case 'connecting':
           setConnectionState('connecting');
@@ -542,13 +581,17 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
       }
     });
 
-    provider.on('peers', (peersList: any) => {
-      const count = Array.isArray(peersList) ? peersList.length : (peersList?.size ?? 0);
+    provider.on('peers', (data: any) => {
+      console.log('[DEBUG peers event]', JSON.stringify(data), 'room conns:', providerRef.current?.room?.webrtcConns?.size);
+      const peerData = Array.isArray(data) ? data[0] : data;
+      const webrtc = peerData?.webrtcPeers?.length ?? (providerRef.current?.room?.webrtcConns?.size ?? 0);
+      const bc = peerData?.bcPeers?.length ?? (providerRef.current?.room?.bcConns?.size ?? 0);
+      const count = webrtc + bc;
       setPeerCount(count);
       if (count > 0 && !offlineModeRef.current) {
         setConnected(true);
         setConnectionState(prev => prev === 'connecting' ? 'syncing' : 'connected');
-        setTimeout(() => flushQueue(), 500);
+        setTimeout(() => flushQueueRef.current(), 300);
       } else if (count === 0 && !offlineModeRef.current) {
         setConnected(false);
         setConnectionState('disconnected');
@@ -559,14 +602,21 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
       setRoomID(roomId);
     });
 
+    provider.on('synced', (data: any) => {
+      console.log('[DEBUG provider synced event]', data);
+    });
+
     // ── Awareness ────────────────────────────────────────────────────────
     awareness.on('update', (updated: any) => {
+      console.log('[DEBUG awareness update]', JSON.stringify(updated), 'total states:', awareness.getStates().size);
       setRemoteCursors(prev => {
         const next = new Map(prev);
-        for (const clientID of updated.added) {
-          const state = awareness.getStates().get(clientID);
+        const states = awareness.getStates();
+        for (const clientID of updated.added || []) {
+          if (clientID === doc.clientID) continue;
+          const state = states.get(clientID);
           if (state?.cursor) {
-            next.set(clientID, {
+            next.set(String(clientID), {
               x: state.cursor.x ?? 0,
               y: state.cursor.y ?? 0,
               color: state.color ?? '#7c3aed',
@@ -574,10 +624,11 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
             });
           }
         }
-        for (const clientID of updated.updated) {
-          const state = awareness.getStates().get(clientID);
+        for (const clientID of updated.updated || []) {
+          if (clientID === doc.clientID) continue;
+          const state = states.get(clientID);
           if (state?.cursor) {
-            next.set(clientID, {
+            next.set(String(clientID), {
               x: state.cursor.x ?? 0,
               y: state.cursor.y ?? 0,
               color: state.color ?? '#7c3aed',
@@ -585,8 +636,8 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
             });
           }
         }
-        for (const clientID of updated.removed) {
-          next.delete(clientID);
+        for (const clientID of updated.removed || []) {
+          next.delete(String(clientID));
         }
         return next;
       });
@@ -598,39 +649,35 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
       })));
     });
 
-    // ── Yjs changes → shapes + conflict detection ────────────────────────
+    // ── Yjs changes → shapes, conflict detection, and merge history ────────
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     doc.on('update', () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
+        const shapesArray = doc.getArray('shapes');
         const currentShapes = getActiveShapes(
-          { doc, shapesArray: doc.getArray('shapes'), awareness, onChange: () => {}, dispose: () => {} } as any
+          { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any
         );
 
-        const detectedConflicts = detectConflicts(currentShapes);
+        // Detect conflicts and handle automatic Union-Bounding-Box merging
+        const detectedConflicts = detectCanvasConflicts(shapesArray as any, currentShapes);
         setConflicts(detectedConflicts);
 
-        const newEvents: any[] = [];
-        const currentCount = currentShapes.length;
+        // Recompute current shapes in case an automatic merge modified shapes
+        const finalShapes = getActiveShapes(
+          { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any
+        );
 
-        if (currentCount > lastShapeCountRef.current) {
-          for (const s of currentShapes) {
-            const prev = historyEventsRef.current.find((e: any) => e.shapeId === s.id);
-            if (!prev) {
-              newEvents.push({ type: 'create', shapeId: s.id, actor: s.actor, ts: s.createdAt });
-              shapeSnapshotsRef.current.set(s.id, s);
-            }
-          }
-        }
-        lastShapeCountRef.current = currentCount;
-
+        // Record history events
+        const newEvents = computeChangeEvents(doc, shapesArray as any, previousShapesRef.current, actorName);
         if (newEvents.length > 0) {
           historyEventsRef.current = [...historyEventsRef.current, ...newEvents];
           setHistory(buildMergeHistory(historyEventsRef.current));
         }
+        previousShapesRef.current = finalShapes;
 
-        setShapes(currentShapes);
+        setShapes(finalShapes);
       }, 50);
     });
 
@@ -638,7 +685,7 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
     indexeddb.on('synced', () => {
       console.log('[canvas] IndexedDB sync complete');
     });
-  }, [actorName, roomId, flushQueue]);
+  }, [actorName, roomId]);
 
   useEffect(() => {
     initCanvas();
@@ -677,10 +724,11 @@ export function useCanvasCRDT(actorName: string, roomId: string): CanvasHooks {
     deleteShape,
     setCursor,
     setParticipantName,
+    resolveConflict,
     sendMessage,
     simulateOffline,
     simulateOnline,
     triggerReconnect,
-    doc: docRef.current,
+    doc: docState || docRef.current,
   };
 }

@@ -127,3 +127,64 @@ test.describe('CRDT Canvas - Offline Mode', () => {
     await expect(page.getByText('✏️ Offline — edits queued')).toBeVisible();
   });
 });
+
+test.describe('CRDT Canvas - Two Peers Real-Time Collaboration', () => {
+  test('Alice and Bob connect in same room, sync drawing, and show awareness', async ({ browser }) => {
+    const context1 = await browser.newContext();
+    const context2 = await browser.newContext();
+    const page1 = await context1.newPage();
+    const page2 = await context2.newPage();
+    page1.on('console', msg => console.log('[P1]', msg.text()));
+    page2.on('console', msg => console.log('[P2]', msg.text()));
+
+    const roomId = 'demo-' + Math.random().toString(36).slice(2, 8);
+
+    // Tab 1: Alice joins
+    await page1.goto('/');
+    await page1.waitForSelector('#crdt-name');
+    await page1.locator('#crdt-name').fill('Alice');
+    await page1.locator('#crdt-room').fill(roomId);
+    await page1.getByRole('button', { name: 'Join Room' }).click();
+    await page1.waitForTimeout(500);
+
+    // Tab 2: Bob joins same room
+    await page2.goto('/');
+    await page2.waitForSelector('#crdt-name');
+    await page2.locator('#crdt-name').fill('Bob');
+    await page2.locator('#crdt-room').fill(roomId);
+    await page2.getByRole('button', { name: 'Join Room' }).click();
+
+    // Verify peers connected
+    await expect(page1.getByText(/peer connected/i)).toBeVisible({ timeout: 10000 });
+    await expect(page2.getByText(/peer connected/i)).toBeVisible({ timeout: 10000 });
+
+    // Alice sends a chat message
+    await page1.getByTitle('Toggle chat').click();
+    await page1.locator('input[placeholder="Type a message…"]').fill('Hey Bob!');
+    await page1.getByRole('button', { name: 'Send' }).click();
+
+    // Bob sees Alice's message in chat
+    await page2.getByTitle('Toggle chat').click();
+    await expect(page2.locator('text=Hey Bob!')).toBeVisible({ timeout: 5000 });
+
+    // Alice draws a rectangle
+    await page1.getByRole('button', { name: 'Rectangle (R)' }).click();
+    const canvas1 = page1.locator('canvas');
+    const box1 = await canvas1.boundingBox();
+    if (box1) {
+      await page1.mouse.move(box1.x + 100, box1.y + 100);
+      await page1.mouse.down();
+      await page1.mouse.move(box1.x + 250, box1.y + 200);
+      await page1.mouse.up();
+    }
+
+    // Both peers see 1 shape on canvas
+    await expect(page1.getByText(/1 shapes/i)).toBeVisible({ timeout: 5000 });
+    await expect(page2.getByText(/1 shapes/i)).toBeVisible({ timeout: 5000 });
+
+    await page1.screenshot({ path: '/home/kevin/.gemini/antigravity-ide/brain/e1dc9bc1-f895-44c1-9733-af1b3d723b62/demo_screenshot.png' });
+
+    await context1.close();
+    await context2.close();
+  });
+});

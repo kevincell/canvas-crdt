@@ -61,16 +61,20 @@ export function ChatPanel({ doc, actorName, actorColor, onClose }: ChatPanelProp
     };
 
     const update = () => {
-      setMessages(parseMessages());
+      const parsed = parseMessages();
+      console.log('[DEBUG ChatPanel update]', actorName, 'msgs count:', parsed.length, 'raw chatText:', chatText.toString());
+      setMessages(parsed);
     };
 
     chatText.observe(update);
+    doc.on('update', update);
     update();
 
     return () => {
       chatText.unobserve(update);
+      doc.off('update', update);
     };
-  }, [doc]);
+  }, [doc, actorName]);
 
   // Auto-scroll to bottom using mutation observer
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -87,12 +91,14 @@ export function ChatPanel({ doc, actorName, actorColor, onClose }: ChatPanelProp
 
   const sendMessage = useCallback(() => {
     const text = inputValue.trim();
+    console.log('[DEBUG ChatPanel sendMessage]', actorName, text, 'doc present:', !!doc, 'doc clientID:', doc?.clientID);
     if (!text || !doc) return;
 
     const chatText = doc.getText('chat');
     const msgId = crypto.randomUUID().slice(0, 8);
     const entry = `${msgId}|${Date.now()}|${actorName}|${text}\n`;
     chatText.insert(chatText.length, entry);
+    console.log('[DEBUG ChatPanel sent!]', 'new len:', chatText.length);
     setInputValue('');
   }, [inputValue, doc, actorName]);
 

@@ -1,7 +1,8 @@
 /**
  * Yjs Integration Layer
  *
- * Wraps Yjs's CRDT engine with our semantic types and conflict detection.
+ * Wraps Yjs's CRDT engine with our semantic types, union-bounding-box
+ * concurrent resize merging, and intent ambiguity conflict detection.
  */
 
 import * as Y from 'yjs';
@@ -45,6 +46,17 @@ const ATTR_DELETED = 'deleted';
 const ATTR_DATA = 'data';
 const ATTR_CREATED = 'createdAt';
 const ATTR_UPDATED = 'updatedAt';
+const ATTR_RESOLVED_TS = 'resolved_ts';
+const ATTR_MERGED_TS = 'merged_ts';
+
+export type EditOp = 'move' | 'resize' | 'update' | 'create' | 'delete';
+
+export interface ActorEdit {
+  data: ShapeData;
+  actor: string;
+  ts: number;
+  op: EditOp;
+}
 
 // ─── Shape ↔ Yjs Conversion ─────────────────────────────────────────────────
 
@@ -115,7 +127,7 @@ export function createYjsCanvas(actor: string, onConflict?: (c: Conflict[]) => v
 
   doc.on('update', () => {
     const currentShapes = yjsShapesToShapes(shapesArray);
-    const conflicts = detectConflicts(currentShapes);
+    const conflicts = detectCanvasConflicts(shapesArray, currentShapes);
     const newEvents = computeChangeEvents(doc, shapesArray, lastShapes, actor);
     lastEvents = [...lastEvents, ...newEvents];
     lastShapes = currentShapes;
@@ -148,6 +160,14 @@ export function createShapeInCanvas(
   for (const [k, v] of Object.entries(attrs)) {
     el.setAttribute(k, v);
   }
+  // Store initial actor edit
+  el.setAttribute(`actorEdit_${actor}`, JSON.stringify({
+    data: shape.data,
+    actor,
+    ts: shape.createdAt,
+    op: 'create',
+  } satisfies ActorEdit));
+
   canvas.shapesArray.push([el]);
   return shape.id;
 }
@@ -156,17 +176,30 @@ export function updateShapeInCanvas(
   canvas: YjsCanvasState,
   shapeId: string,
   data: Partial<ShapeData>,
-  actor: string
+  actor: string,
+  op: EditOp = 'update'
 ): void {
   for (const el of canvas.shapesArray) {
     if (el.getAttribute(ATTR_ID) === shapeId) {
       const current = yjsAttrToShape(el);
       if (!current) return;
-      const merged = { ...current.data, ...data } as ShapeData;
-      const attrs = shapeToYjsAttrs({ ...current, data: merged, actor, updatedAt: Date.now() });
-      for (const [k, v] of Object.entries(attrs)) {
-        el.setAttribute(k, v);
-      }
+      const mergedData = { ...current.data, ...data } as ShapeData;
+      const now = Date.now();
+      const updatedVector = incrementVec(current.vector, actor);
+
+      el.setAttribute(ATTR_DATA, JSON.stringify(mergedData));
+      el.setAttribute(ATTR_ACTOR, actor);
+      el.setAttribute(ATTR_UPDATED, String(now));
+      el.setAttribute(ATTR_VECTOR, JSON.stringify(updatedVector));
+
+      // Record per-actor edit to preserve intent for CRDT semantic merging
+      el.setAttribute(`actorEdit_${actor}`, JSON.stringify({
+        data: mergedData,
+        actor,
+        ts: now,
+        op,
+      } satisfies ActorEdit));
+
       break;
     }
   }
@@ -175,12 +208,168 @@ export function updateShapeInCanvas(
 export function deleteShapeInCanvas(canvas: YjsCanvasState, shapeId: string, actor: string): void {
   for (const el of canvas.shapesArray) {
     if (el.getAttribute(ATTR_ID) === shapeId) {
+      const now = Date.now();
       el.setAttribute(ATTR_DELETED, 'true');
-      el.setAttribute(ATTR_UPDATED, String(Date.now()));
+      el.setAttribute(ATTR_UPDATED, String(now));
       el.setAttribute(ATTR_ACTOR, actor);
+      el.setAttribute(`actorEdit_${actor}`, JSON.stringify({
+        data: JSON.parse(el.getAttribute(ATTR_DATA) ?? '{}'),
+        actor,
+        ts: now,
+        op: 'delete',
+      } satisfies ActorEdit));
       break;
     }
   }
+}
+
+// ─── Conflict Resolution ─────────────────────────────────────────────────────
+
+export function resolveConflictInCanvas(
+  canvas: YjsCanvasState,
+  shapeId: string,
+  action: 'merge' | 'keep-local' | 'keep-remote',
+  actor: string
+): void {
+  for (const el of canvas.shapesArray) {
+    if (el.getAttribute(ATTR_ID) === shapeId) {
+      const current = yjsAttrToShape(el);
+      if (!current) return;
+
+      const actorEdits = getActorEdits(el);
+      const now = Date.now();
+
+      if (action === 'merge') {
+        const editsToMerge = actorEdits.map(e => ({
+          ...current,
+          data: e.data,
+          actor: e.actor,
+          updatedAt: e.ts,
+        }));
+        if (editsToMerge.length > 0) {
+          const mergedShape = mergeShapes(current, editsToMerge);
+          el.setAttribute(ATTR_DATA, JSON.stringify(mergedShape.data));
+        }
+      } else if (action === 'keep-local') {
+        const localEdit = actorEdits.find(e => e.actor === actor);
+        if (localEdit) {
+          el.setAttribute(ATTR_DATA, JSON.stringify(localEdit.data));
+        }
+      } else if (action === 'keep-remote') {
+        const remoteEdit = actorEdits.find(e => e.actor !== actor);
+        if (remoteEdit) {
+          el.setAttribute(ATTR_DATA, JSON.stringify(remoteEdit.data));
+        }
+      }
+
+      el.setAttribute(ATTR_RESOLVED_TS, String(now));
+      el.setAttribute(ATTR_UPDATED, String(now));
+      break;
+    }
+  }
+}
+
+// ─── Semantic Merge & Conflict Detection ─────────────────────────────────────
+
+function getActorEdits(el: Y.XmlElement): ActorEdit[] {
+  const edits: ActorEdit[] = [];
+  const attrs = el.getAttributes();
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k.startsWith('actorEdit_') && typeof v === 'string') {
+      try {
+        const edit = JSON.parse(v) as ActorEdit;
+        edits.push(edit);
+      } catch {
+        /* ignore invalid edit */
+      }
+    }
+  }
+  return edits;
+}
+
+export function detectCanvasConflicts(
+  shapesArray: Y.Array<Y.XmlElement>,
+  activeShapes: Shape[]
+): Conflict[] {
+  const conflicts: Conflict[] = [];
+  const now = Date.now();
+
+  for (const el of shapesArray) {
+    const shape = yjsAttrToShape(el);
+    if (!shape) continue;
+
+    const resolvedTs = Number(el.getAttribute(ATTR_RESOLVED_TS) || 0);
+    const mergedTs = Number(el.getAttribute(ATTR_MERGED_TS) || 0);
+
+    // Collect recent edits from different actors that have not been resolved
+    const allEdits = getActorEdits(el);
+    const recentEdits = allEdits.filter(e => now - e.ts < 30000 && e.ts > resolvedTs);
+
+    // Group by distinct actors
+    const actorMap = new Map<string, ActorEdit>();
+    for (const edit of recentEdits) {
+      const existing = actorMap.get(edit.actor);
+      if (!existing || edit.ts > existing.ts) {
+        actorMap.set(edit.actor, edit);
+      }
+    }
+
+    const distinctEdits = Array.from(actorMap.values());
+    if (distinctEdits.length < 2) continue;
+
+    const [editA, editB] = distinctEdits;
+    const isConcurrentResize = (editA.op === 'resize' && editB.op === 'resize') ||
+      ((editA.op === 'resize' || editB.op === 'resize') &&
+       (shape.kind === ShapeKind.Rect || shape.kind === ShapeKind.Image || shape.kind === ShapeKind.Note));
+
+    if (isConcurrentResize) {
+      // Apply Union-Bounding-Box Merge Rule automatically
+      const latestEditTs = Math.max(editA.ts, editB.ts);
+      if (mergedTs < latestEditTs) {
+        const shapeA = { ...shape, data: editA.data, actor: editA.actor, updatedAt: editA.ts };
+        const shapeB = { ...shape, data: editB.data, actor: editB.actor, updatedAt: editB.ts };
+        const merged = mergeShapes(shape, [shapeA, shapeB]);
+
+        el.setAttribute(ATTR_DATA, JSON.stringify(merged.data));
+        el.setAttribute(ATTR_MERGED_TS, String(latestEditTs));
+        shape.data = merged.data;
+        console.log(`[crdt-engine] Merged concurrent resizes via Union-Bounding-Box on ${shape.id} (${editA.actor} + ${editB.actor})`);
+      }
+      continue;
+    }
+
+    // Check for delete vs edit
+    const hasDelete = distinctEdits.some(e => e.op === 'delete');
+    if (hasDelete) {
+      conflicts.push({
+        shapeId: shape.id,
+        type: 'delete_vs_edit',
+        actors: distinctEdits.map(e => e.actor),
+        level: 'high',
+        description: `Shape edited while deleted by another peer`,
+        ts: Math.max(...distinctEdits.map(e => e.ts)),
+      });
+      continue;
+    }
+
+    // Check for divergent moves / positions
+    const shapeA = { ...shape, data: editA.data, actor: editA.actor };
+    const shapeB = { ...shape, data: editB.data, actor: editB.actor };
+    const level = classifyAmbiguity(shapeA, shapeB);
+
+    if (level === 'medium' || level === 'high') {
+      conflicts.push({
+        shapeId: shape.id,
+        type: 'concurrent_edit',
+        actors: [editA.actor, editB.actor],
+        level,
+        description: `Divergent moves by ${editA.actor} and ${editB.actor} (${level} ambiguity)`,
+        ts: Math.max(editA.ts, editB.ts),
+      });
+    }
+  }
+
+  return conflicts;
 }
 
 // ─── Read Shapes ─────────────────────────────────────────────────────────────
@@ -200,7 +389,7 @@ export function getActiveShapes(canvas: YjsCanvasState): Shape[] {
 
 // ─── Merge History from Yjs Changes ──────────────────────────────────────────
 
-function computeChangeEvents(
+export function computeChangeEvents(
   doc: Y.Doc,
   shapesArray: Y.Array<Y.XmlElement>,
   previousShapes: Shape[],

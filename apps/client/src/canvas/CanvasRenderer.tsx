@@ -34,9 +34,10 @@ export interface CanvasRenderProps {
   onNoteAdd: (x: number, y: number, text: string, color: string, bgColor: string) => void;
   onDelete: (id: string) => void;
   onShapeMoved: (id: string, dx: number, dy: number) => void;
-  onShapeResized: (id: string, data: Partial<any>) => void;
+  onShapeResized: (id: string, data: Partial<any>, op?: 'resize' | 'move' | 'update') => void;
   onZoomChange: (scale: number) => void;
   onImageDrop: (x: number, y: number, w: number, h: number, src: string) => void;
+  onCursorMove?: (x: number, y: number) => void;
 }
 
 export function CanvasRenderer({
@@ -62,6 +63,7 @@ export function CanvasRenderer({
   onShapeResized,
   onZoomChange,
   onImageDrop,
+  onCursorMove,
 }: CanvasRenderProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -166,7 +168,7 @@ export function CanvasRenderer({
       high: 'rgba(239, 68, 68, 0.5)',
     };
 
-    const renderShapes = history
+    const renderShapes = (history && (isPlaying || (historyStep > 0 && historyStep < history.totalSteps)))
       ? history.playback(historyStep)
       : shapes;
 
@@ -520,6 +522,7 @@ export function CanvasRenderer({
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const pos = getWorldPos(e);
+    onCursorMove?.(pos.x, pos.y);
 
     // Pan
     if (isPanning && panStart) {
@@ -554,7 +557,7 @@ export function CanvasRenderer({
       } else if (dragHandle === 3) {
         newData.w = Math.max(20, b.maxX - b.minX + dx); newData.h = Math.max(20, b.maxY - b.minY + dy);
       }
-      onShapeResized(selectedIdRef.current, newData);
+      onShapeResized(selectedIdRef.current, newData, 'resize');
       setDragOffset({ x: pos.x, y: pos.y });
       render();
       return;
@@ -695,34 +698,62 @@ export function CanvasRenderer({
   // ── Draw helpers ──────────────────────────────────────────────────────────
 
   function drawGrid(ctx: CanvasRenderingContext2D, w: number, h: number, zoom: number, off: { x: number; y: number }) {
-    const gridSize = 40;
-    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-    ctx.lineWidth = 0.5 / zoom;
-    const startX = Math.floor(-off.x / gridSize / zoom) * gridSize;
-    const startY = Math.floor(-off.y / gridSize / zoom) * gridSize;
-    const endX = startX + w / zoom + gridSize * 2;
-    const endY = startY + h / zoom + gridSize * 2;
+    const dotSpacing = 32;
+    const dotRadius = Math.max(0.8 / zoom, 1.2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    const startX = Math.floor(-off.x / dotSpacing / zoom) * dotSpacing;
+    const startY = Math.floor(-off.y / dotSpacing / zoom) * dotSpacing;
+    const endX = startX + w / zoom + dotSpacing * 2;
+    const endY = startY + h / zoom + dotSpacing * 2;
     ctx.beginPath();
-    for (let x = startX; x < endX; x += gridSize) {
-      ctx.moveTo(x, startY); ctx.lineTo(x, endY);
+    for (let x = startX; x < endX; x += dotSpacing) {
+      for (let y = startY; y < endY; y += dotSpacing) {
+        ctx.rect(x - dotRadius / 2, y - dotRadius / 2, dotRadius, dotRadius);
+      }
     }
-    for (let y = startY; y < endY; y += gridSize) {
-      ctx.moveTo(startX, y); ctx.lineTo(endX, y);
-    }
-    ctx.stroke();
+    ctx.fill();
   }
 
   function drawCursor(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, name: string) {
     ctx.save();
     ctx.translate(x, y);
+
+    // Drop shadow for pointer
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetX = 1;
+    ctx.shadowOffsetY = 2;
+
+    // Sleek pointer arrow
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.moveTo(0, 0); ctx.lineTo(0, 14); ctx.lineTo(4, 10); ctx.lineTo(8, 14);
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, 16);
+    ctx.lineTo(4.5, 12);
+    ctx.lineTo(9, 18);
+    ctx.lineTo(12, 16.5);
+    ctx.lineTo(7.5, 10.5);
+    ctx.lineTo(13, 10.5);
     ctx.closePath();
     ctx.fill();
-    ctx.font = 'bold 11px Inter, sans-serif';
+
+    // Name badge pill
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.font = '600 11px Inter, sans-serif';
+    const textWidth = ctx.measureText(name).width;
+    const pillW = textWidth + 14;
+    const pillH = 18;
+    const pillX = 14;
+    const pillY = 12;
+
     ctx.fillStyle = color;
-    ctx.fillText(name, 10, -4);
+    roundRect(ctx, pillX, pillY, pillW, pillH, 9);
+    ctx.fill();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(name, pillX + 7, pillY + 13);
+
     ctx.restore();
   }
 

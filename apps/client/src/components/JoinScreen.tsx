@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
 
-export function JoinScreen({ onJoin }: { onJoin: (name: string, roomId: string) => void }) {
+export function JoinScreen({
+  onJoin,
+  onLaunchDual,
+}: {
+  onJoin: (name: string, roomId: string) => void;
+  onLaunchDual?: (roomId: string) => void;
+}) {
   const [name, setName] = useState('');
   const [roomId, setRoomId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
@@ -182,6 +188,51 @@ export function JoinScreen({ onJoin }: { onJoin: (name: string, roomId: string) 
         >
           Join Room
         </button>
+
+        {/* Divider */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          margin: '18px 0 14px',
+          color: '#555570',
+          fontSize: 10,
+          textTransform: 'uppercase',
+          letterSpacing: '0.08em',
+          fontWeight: 600,
+        }}>
+          <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+          <span>Or 1-Click Live Demo</span>
+          <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+        </div>
+
+        {/* Dual-Peer Presenter Mode Button */}
+        {onLaunchDual && (
+          <button
+            onClick={() => onLaunchDual(roomId.trim() || 'demo-' + Math.random().toString(36).slice(2, 8))}
+            style={{
+              width: '100%',
+              padding: '11px',
+              background: 'rgba(16, 185, 129, 0.12)',
+              border: '1px solid rgba(16, 185, 129, 0.35)',
+              borderRadius: 12,
+              color: '#6ee7b7',
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              fontFamily: 'Inter, sans-serif',
+              letterSpacing: '0.01em',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              boxShadow: '0 4px 16px rgba(16, 185, 129, 0.15)',
+            }}
+          >
+            <span>🚀</span> Launch Dual-Peer Demo (Side-by-Side)
+          </button>
+        )}
 
         {/* LAN IP */}
         {localIP && (

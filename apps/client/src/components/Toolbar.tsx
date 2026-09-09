@@ -87,7 +87,7 @@ export function Toolbar({
       borderRadius: 2,
       backdropFilter: 'blur(16px)',
       zIndex: 100,
-      flexWrap: 'wrap',
+      flexWrap: 'nowrap',
       justifyContent: 'center',
       maxWidth: '96vw',
       boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
@@ -113,7 +113,7 @@ export function Toolbar({
         </IconButton>
       ))}
 
-      <Box sx={{ width: 1, height: 18, background: 'rgba(255,255,255,0.06)', mx: 0.4, transform: 'scaleY(1.5)', minWidth: 1 }} />
+      <Box sx={{ width: '1px', height: 18, background: 'rgba(255,255,255,0.1)', mx: 0.5, flexShrink: 0 }} />
 
       {/* Colors */}
       {COLORS.map(c => (
@@ -144,7 +144,7 @@ export function Toolbar({
         />
       </Box>
 
-      <Box sx={{ width: 1, height: 18, background: 'rgba(255,255,255,0.06)', mx: 0.4, transform: 'scaleY(1.5)', minWidth: 1 }} />
+      <Box sx={{ width: '1px', height: 18, background: 'rgba(255,255,255,0.1)', mx: 0.5, flexShrink: 0 }} />
 
       {/* Undo / Redo */}
       <IconButton size="small" onClick={onUndo} disabled={!canUndo} title="Undo (Ctrl+Z)"
@@ -156,7 +156,7 @@ export function Toolbar({
         <Redo sx={{ fontSize: 15 }} />
       </IconButton>
 
-      <Box sx={{ width: 1, height: 18, background: 'rgba(255,255,255,0.06)', mx: 0.4, transform: 'scaleY(1.5)', minWidth: 1 }} />
+      <Box sx={{ width: '1px', height: 18, background: 'rgba(255,255,255,0.1)', mx: 0.5, flexShrink: 0 }} />
 
       {/* Zoom */}
       <IconButton size="small" onClick={onZoomIn} title="Zoom in" sx={{ color: '#6b6b8a', width: 28, height: 28 }}>
@@ -172,7 +172,7 @@ export function Toolbar({
         <RestartAlt sx={{ fontSize: 15 }} />
       </IconButton>
 
-      <Box sx={{ width: 1, height: 18, background: 'rgba(255,255,255,0.06)', mx: 0.4, transform: 'scaleY(1.5)', minWidth: 1 }} />
+      <Box sx={{ width: '1px', height: 18, background: 'rgba(255,255,255,0.1)', mx: 0.5, flexShrink: 0 }} />
 
       {/* Chat toggle */}
       <IconButton
@@ -239,7 +239,7 @@ export function Toolbar({
         </Box>
       )}
 
-      <Box sx={{ width: 1, height: 18, background: 'rgba(255,255,255,0.06)', mx: 0.4, transform: 'scaleY(1.5)', minWidth: 1 }} />
+      <Box sx={{ width: '1px', height: 18, background: 'rgba(255,255,255,0.1)', mx: 0.5, flexShrink: 0 }} />
 
       {/* History playback */}
       {history && (
@@ -267,7 +267,7 @@ export function Toolbar({
         </>
       )}
 
-      <Box sx={{ width: 1, height: 18, background: 'rgba(255,255,255,0.06)', mx: 0.4, transform: 'scaleY(1.5)', minWidth: 1 }} />
+      <Box sx={{ width: '1px', height: 18, background: 'rgba(255,255,255,0.1)', mx: 0.5, flexShrink: 0 }} />
 
       {/* Simulator toggle */}
       <IconButton

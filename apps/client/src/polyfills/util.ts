@@ -2,10 +2,7 @@
 // Used by simple-peer and other Node.js libraries
 
 // debuglog - returns a no-op function in browser
-export function debuglog(section: string) {
-  if (typeof console !== 'undefined' && console.debug) {
-    return (...args: any[]) => console.debug(`[${section}]`, ...args);
-  }
+export function debuglog(_section: string) {
   return () => {};
 }
 
@@ -81,7 +78,7 @@ export const isDate = (v: any) => v instanceof Date;
 export const isError = (v: any) => v instanceof Error;
 export const isFunction = (v: any) => typeof v === 'function';
 export const isPrimitive = (v: any) => v === null || typeof v !== 'object';
-export const isBuffer = () => false;
+export const isBuffer = (v: any) => Boolean(v && (v._isBuffer || (typeof Buffer !== 'undefined' && typeof Buffer.isBuffer === 'function' && Buffer.isBuffer(v))));
 export const isArrayBuffer = (v: any) => v instanceof ArrayBuffer;
 export const isDataView = (v: any) => v instanceof DataView;
 export const isMap = (v: any) => v instanceof Map;
