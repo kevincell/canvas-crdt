@@ -110,7 +110,7 @@ IndexedDB persistence via `y-indexeddb` ensures that each peer maintains a compl
 
 ## Project Structure
 
-```
+```text
 crdt-canvas/
 ├── packages/
 │   └── engine/              # Core CRDT engine (shape types, conflict detection, merge rules)
@@ -124,16 +124,15 @@ crdt-canvas/
 │   └── client/              # React + Vite + Canvas frontend
 │       ├── src/
 │       │   ├── App.tsx                 # Main app component
-│       │   ├── hooks/
-│       │   │   └── useCanvasCRDT.ts    # Yjs + WebRTC + IndexedDB orchestration
-│       │   ├── canvas/
-│       │   │   └── CanvasRenderer.tsx  # HTML5 Canvas renderer
-│       │   └── components/
-│       │       ├── Toolbar.tsx          # Tool palette
-│       │       ├── ConflictPanel.tsx    # Ambiguity detection UI
-│       │       ├── StatusPanel.tsx      # Connection status
-│       │       ├── PartitionSimulator.tsx # Offline/testing tool
-│       │       └── JoinScreen.tsx       # Room join/creation
+│       │   ├── features/               # Feature-sliced component domains
+│       │   │   ├── canvas/             # Rendering and toolbar
+│       │   │   ├── crdt/               # Conflict panels and offline simulation
+│       │   │   ├── chat/               # Collaborative chat
+│       │   │   └── demo/               # Side-by-side demo containers
+│       │   ├── views/                  # Page-level components (JoinScreen, etc.)
+│       │   ├── components/             # Reusable UI components
+│       │   └── hooks/
+│       │       └── useCanvasCRDT.ts    # Yjs + WebRTC + IndexedDB orchestration
 ```
 
 ## Getting Started

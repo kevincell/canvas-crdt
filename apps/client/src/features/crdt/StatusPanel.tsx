@@ -47,12 +47,13 @@ export function StatusPanel({
           badgeContent={
             <Box sx={{
               width: 8, height: 8, borderRadius: '50%',
-              background: connectionState === 'connected' ? '#10b981'
-                : connectionState === 'syncing' ? '#f59e0b'
-                : connectionState === 'connecting' ? '#3b82f6'
-                : connectionState === 'offline' ? '#f97316'
-                : '#ef4444',
-              boxShadow: `0 0 6px ${connectionState === 'connected' ? '#10b981' : connectionState === 'syncing' ? '#f59e0b' : '#ef4444'}`,
+              background: connectionState === 'connected' ? '#6ee7b7'
+                : connectionState === 'syncing' ? '#fcd34d'
+                : connectionState === 'connecting' ? '#93c5fd'
+                : connectionState === 'offline' ? '#fdba74'
+                : '#fca5a5',
+              boxShadow: `0 0 8px ${connectionState === 'connected' ? '#6ee7b7' : connectionState === 'syncing' ? '#fcd34d' : '#fca5a5'}`,
+              animation: (connectionState === 'syncing' || connectionState === 'connecting') ? 'pulse 1.2s ease-in-out infinite' : 'none',
             }} />
           }
         >

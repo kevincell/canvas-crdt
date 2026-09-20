@@ -42,15 +42,17 @@ export function PartitionSimulator({
         </div>
         <div style={{ fontSize: 11, color: '#a3a3a3', lineHeight: 1.3 }}>
           If testing on one computer, open your second peer in an <b>Incognito Window</b>. Otherwise, tabs will still sync instantly bypassing the network via shared IndexedDB/Local Storage!
-        </div>
-      </div>
+        </div>        </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <button onClick={() => onSimulate('network-split')} style={btnStyle}>
-          <span style={{ fontSize: 16 }}>🔌</span> Simulate Offline (Disconnect)
+          <span style={{ fontSize: 16 }}>🔌</span> Network Split
         </button>
-        <button onClick={() => onSimulate('reconnect')} style={{ ...btnStyle, borderColor: 'rgba(16, 185, 129, 0.4)', background: 'rgba(16, 185, 129, 0.1)' }}>
-          <span style={{ fontSize: 16 }}>🔗</span> Reconnect Network
+        <button onClick={() => onSimulate('reconnect')} style={{...btnStyle, borderColor: 'rgba(16, 185, 129, 0.4)', background: 'rgba(16, 185, 129, 0.1)'}}>
+          <span style={{ fontSize: 16 }}>🔗</span> Reconnect
+        </button>
+        <button onClick={() => onSimulate('offline-edit')} style={{...btnStyle, borderColor: 'rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.1)'}}>
+          <span style={{ fontSize: 16 }}>✏️</span> Offline Edit
         </button>
       </div>
     </div>

@@ -34,7 +34,11 @@ type Room = {
 
 // ── State ────────────────────────────────────────────────────────────────────
 
-const PORT = parseInt(process.env.PORT || '3001');
+const PORT = parseInt(process.env.PORT ?? '3001', 10);
+if (isNaN(PORT) || PORT < 1 || PORT > 65535) {
+  console.error(`[signaler] Invalid PORT env var: ${process.env.PORT ?? 'unset'}. Defaulting to 3001.`);
+  process.exit(1);
+}
 const peers = new Map<WebSocket, Peer>();
 const rooms = new Map<string, Room>();
 

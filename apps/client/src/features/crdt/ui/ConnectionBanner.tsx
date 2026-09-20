@@ -23,40 +23,41 @@ export function ConnectionBanner({ state, peerCount, queuedOps, onReconnect }: C
   const getConfig = () => {
     switch (state) {
       case 'disconnected':
-        return { color: '#ef4444', bg: 'rgba(239,68,68,0.10)', border: 'rgba(239,68,68,0.3)', icon: '⚠', label: 'Disconnected', sublabel: 'Signaling server unreachable' };
+        return { color: '#fca5a5', bg: 'rgba(239,68,68,0.15)', border: 'rgba(239,68,68,0.4)', icon: '⚠', label: 'Disconnected', sublabel: 'Signaling server unreachable' };
       case 'connecting':
-        return { color: '#3b82f6', bg: 'rgba(59,130,246,0.10)', border: 'rgba(59,130,246,0.3)', icon: '⟳', label: 'Connecting', sublabel: 'Establishing WebRTC link…' };
+        return { color: '#93c5fd', bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.4)', icon: '⟳', label: 'Connecting', sublabel: 'Establishing WebRTC link…' };
       case 'connected':
-        return { color: '#10b981', bg: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.25)', icon: '✓', label: 'Connected', sublabel: `${peerCount} peer${peerCount !== 1 ? 's' : ''} online` };
+        return { color: '#6ee7b7', bg: 'rgba(16,185,129,0.15)', border: 'rgba(16,185,129,0.4)', icon: '✓', label: 'Connected', sublabel: `${peerCount} peer${peerCount !== 1 ? 's' : ''} online` };
       case 'syncing':
-        return { color: '#f59e0b', bg: 'rgba(245,158,11,0.10)', border: 'rgba(245,158,11,0.3)', icon: '⇄', label: 'Syncing', sublabel: 'Synchronizing changes…' };
+        return { color: '#fcd34d', bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.4)', icon: '⇄', label: 'Syncing', sublabel: 'Synchronizing changes…' };
       case 'offline':
-        return { color: '#f97316', bg: 'rgba(249,115,22,0.10)', border: 'rgba(249,115,22,0.3)', icon: '✏', label: 'Offline Mode', sublabel: queuedOps > 0 ? `${queuedOps} edit${queuedOps !== 1 ? 's' : ''} queued locally` : 'Edits queued locally' };
+        return { color: '#fdba74', bg: 'rgba(249,115,22,0.15)', border: 'rgba(249,115,22,0.4)', icon: '✏', label: 'Offline Mode', sublabel: queuedOps > 0 ? `${queuedOps} edit${queuedOps !== 1 ? 's' : ''} queued locally` : 'Edits queued locally' };
     }
   };
 
   const cfg = getConfig();
 
-  if (!visible) return null;
-
   return (
     <Box sx={{
       position: 'absolute',
-      top: 68,
+      top: visible ? 68 : -60,
       left: '50%',
       transform: 'translateX(-50%)',
       display: 'flex',
       alignItems: 'center',
-      gap: 10,
-      padding: '7px 16px',
+      gap: 1.5,
+      padding: '8px 20px',
       background: cfg.bg,
       border: `1px solid ${cfg.border}`,
-      borderRadius: 2,
-      backdropFilter: 'blur(16px)',
+      borderRadius: 4,
+      backdropFilter: 'blur(20px)',
       zIndex: 100,
-      minWidth: 200,
-      maxWidth: 360,
-      animation: 'fadeIn 0.2s ease',
+      minWidth: 220,
+      maxWidth: 400,
+      opacity: visible ? 1 : 0,
+      pointerEvents: visible ? 'auto' : 'none',
+      transition: 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+      boxShadow: `0 8px 32px ${cfg.bg.replace('0.15', '0.3')}`,
     }}>
       <Typography sx={{
         fontSize: 16,

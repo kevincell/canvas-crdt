@@ -7,7 +7,8 @@ import {
   Straight as StraightLineIcon, TextFields, Delete as EraserIcon,
   Undo, Redo, ZoomIn, ZoomOut, RestartAlt,
   People, Chat as ChatIcon,
-  Image as ImageIcon, Note as NoteIcon,
+  Image as ImageIcon, Note as NoteIcon, 
+  Highlight as LaserIcon,
 } from '@mui/icons-material';
 
 const TOOLS = [
@@ -19,6 +20,7 @@ const TOOLS = [
   { id: 'text',    label: 'Text (T)',         icon: TextFields },
   { id: 'image',   label: 'Upload Image (I)', icon: ImageIcon },
   { id: 'note',    label: 'Sticky Note (N)',  icon: NoteIcon },
+  { id: 'laser',   label: 'Laser Pointer (P)',icon: LaserIcon },
   { id: 'eraser',  label: 'Eraser (X)',       icon: EraserIcon },
 ] as const;
 
@@ -29,7 +31,7 @@ const COLORS = [
 
 interface ToolbarProps {
   tool: string;
-  setTool: (t: 'stroke' | 'rect' | 'ellipse' | 'line' | 'text' | 'image' | 'note' | 'select' | 'eraser') => void;
+  setTool: (t: 'stroke' | 'rect' | 'ellipse' | 'line' | 'text' | 'image' | 'note' | 'laser' | 'select' | 'eraser') => void;
   activeColor: string;
   setActiveColor: (c: string) => void;
   strokeWidth: number;
@@ -243,28 +245,18 @@ export function Toolbar({
 
       {/* History playback */}
       {history && (
-        <>
-          <IconButton
-            size="small"
-            onClick={() => { setIsPlaying(!isPlaying); if (!isPlaying) onResetHistory(); }}
-            title={isPlaying ? 'Pause history' : 'Play merge history'}
-            sx={{
-              width: 28, height: 28,
-              color: isPlaying ? '#10b981' : '#a78bfa',
-              background: isPlaying ? 'rgba(16, 185, 129, 0.12)' : 'rgba(124, 58, 237, 0.12)',
-            }}
-          >
-            {isPlaying ? '⏸' : '▶'}
-          </IconButton>
-          <Slider
-            value={historyStep}
-            min={0} max={history.totalSteps}
-            onChange={(_, v) => onHistoryChange(v as number)}
-            size="small"
-            sx={{ width: 60, '& .MuiSlider-thumb': { width: 8, height: 8 }, '& .MuiSlider-track': { height: 2 } }}
-          />
-          <Typography sx={{ fontSize: 10, color: '#6b6b8a', minWidth: 32 }}>{historyStep}/{history.totalSteps}</Typography>
-        </>
+        <IconButton
+          size="small"
+          onClick={() => { setIsPlaying(!isPlaying); if (!isPlaying) onResetHistory(); }}
+          title={isPlaying ? 'Close Time Travel' : 'Time Travel Scrubber'}
+          sx={{
+            width: 28, height: 28,
+            color: isPlaying ? '#10b981' : '#a78bfa',
+            background: isPlaying ? 'rgba(16, 185, 129, 0.12)' : 'rgba(124, 58, 237, 0.12)',
+          }}
+        >
+          {isPlaying ? '⏸' : '⏳'}
+        </IconButton>
       )}
 
       <Box sx={{ width: '1px', height: 18, background: 'rgba(255,255,255,0.1)', mx: 0.5, flexShrink: 0 }} />

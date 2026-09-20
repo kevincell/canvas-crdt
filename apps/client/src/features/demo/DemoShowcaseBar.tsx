@@ -6,7 +6,7 @@ import AspectRatioIcon from '@mui/icons-material/AspectRatio';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import CloudOffIcon from '@mui/icons-material/CloudOff';
-import { sound } from '../utils/audio';
+import { sound } from '../../utils/audio';
 
 interface DemoShowcaseBarProps {
   onRunUnionBoxDemo: () => void;

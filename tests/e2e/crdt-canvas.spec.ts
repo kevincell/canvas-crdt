@@ -70,7 +70,7 @@ test.describe('CRDT Canvas - Canvas Features', () => {
 
   test('simulator toggle opens partition simulator', async ({ page }) => {
     await page.getByTitle(/partition simulator/).click();
-    await expect(page.locator('text=Partition Simulator')).toBeVisible();
+    await expect(page.locator('text=Network Simulator')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Network Split' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Offline Edit' })).toBeVisible();
@@ -155,8 +155,8 @@ test.describe('CRDT Canvas - Two Peers Real-Time Collaboration', () => {
     await page2.getByRole('button', { name: 'Join Room' }).click();
 
     // Verify peers connected
-    await expect(page1.getByText(/peer connected/i)).toBeVisible({ timeout: 10000 });
-    await expect(page2.getByText(/peer connected/i)).toBeVisible({ timeout: 10000 });
+    await expect(page1.getByText(/peers connected/i)).toBeVisible({ timeout: 10000 });
+    await expect(page2.getByText(/peers connected/i)).toBeVisible({ timeout: 10000 });
 
     // Alice sends a chat message
     await page1.getByTitle('Toggle chat').click();

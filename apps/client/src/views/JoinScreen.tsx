@@ -58,6 +58,13 @@ export function JoinScreen({
       justifyContent: 'center',
       background: 'radial-gradient(ellipse at 30% 20%, rgba(124,58,237,0.08) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(59,130,246,0.06) 0%, transparent 50%), #0f0f14',
     }}>
+      <style>{`
+        .join-input:focus { border-color: rgba(124,58,237,0.6) !important; box-shadow: 0 0 0 2px rgba(124,58,237,0.2) !important; }
+        .join-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(124,58,237,0.3) !important; filter: brightness(1.1); }
+        .join-btn:active:not(:disabled) { transform: translateY(1px); }
+        .dual-btn:hover { background: rgba(16, 185, 129, 0.18) !important; border-color: rgba(16, 185, 129, 0.5) !important; transform: translateY(-1px); box-shadow: 0 6px 24px rgba(16, 185, 129, 0.2) !important; }
+        .dual-btn:active { transform: translateY(1px); }
+      `}</style>
       <div style={{
         width: 400,
         padding: '36px 32px',
@@ -66,7 +73,7 @@ export function JoinScreen({
         borderRadius: 20,
         backdropFilter: 'blur(20px)',
         boxShadow: '0 8px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03)',
-        animation: 'fadeIn 0.3s ease',
+        animation: 'fadeIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
       }}>
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
@@ -98,6 +105,7 @@ export function JoinScreen({
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="e.g. Alice"
+            className="join-input"
             style={{
               width: '100%',
               padding: '11px 14px',
@@ -107,11 +115,9 @@ export function JoinScreen({
               color: '#e2e2f0',
               fontSize: 14,
               outline: 'none',
-              transition: 'border-color 0.15s',
+              transition: 'all 0.2s',
               fontFamily: 'Inter, sans-serif',
             }}
-            onFocus={e => (e.target.style.borderColor = 'rgba(124,58,237,0.5)')}
-            onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.1)')}
             onKeyDown={e => e.key === 'Enter' && handleJoin()}
           />
         </div>
@@ -147,6 +153,7 @@ export function JoinScreen({
             value={roomId}
             onChange={e => setRoomId(e.target.value)}
             placeholder="Enter or create a room…"
+            className="join-input"
             style={{
               width: '100%',
               padding: '11px 14px',
@@ -156,12 +163,10 @@ export function JoinScreen({
               color: '#e2e2f0',
               fontSize: 14,
               outline: 'none',
-              transition: 'border-color 0.15s',
+              transition: 'all 0.2s',
               fontFamily: 'monospace',
               letterSpacing: '0.05em',
             }}
-            onFocus={e => (e.target.style.borderColor = 'rgba(124,58,237,0.5)')}
-            onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.1)')}
             onKeyDown={e => e.key === 'Enter' && handleJoin()}
           />
         </div>
@@ -170,6 +175,7 @@ export function JoinScreen({
         <button
           onClick={handleJoin}
           disabled={!canJoin}
+          className="join-btn"
           style={{
             width: '100%',
             padding: '13px',
@@ -180,7 +186,7 @@ export function JoinScreen({
             fontSize: 15,
             fontWeight: 600,
             cursor: canJoin ? 'pointer' : 'not-allowed',
-            transition: 'all 0.2s',
+            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
             fontFamily: 'Inter, sans-serif',
             letterSpacing: '0.02em',
             boxShadow: canJoin ? '0 4px 16px rgba(124,58,237,0.25)' : 'none',
@@ -210,6 +216,7 @@ export function JoinScreen({
         {onLaunchDual && (
           <button
             onClick={() => onLaunchDual(roomId.trim() || 'demo-' + Math.random().toString(36).slice(2, 8))}
+            className="dual-btn"
             style={{
               width: '100%',
               padding: '11px',
@@ -220,7 +227,7 @@ export function JoinScreen({
               fontSize: 13,
               fontWeight: 700,
               cursor: 'pointer',
-              transition: 'all 0.2s',
+              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
               fontFamily: 'Inter, sans-serif',
               letterSpacing: '0.01em',
               display: 'flex',

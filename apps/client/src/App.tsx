@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
-import { JoinScreen } from './components/JoinScreen';
-import { SingleCanvasView } from './components/SingleCanvasView';
-import { DualPeerContainer } from './components/DualPeerContainer';
+import { JoinScreen } from './views/JoinScreen';
+import { SingleCanvasView } from './views/SingleCanvasView';
+import { DualPeerContainer } from './features/demo/DualPeerContainer';
 import { Box } from '@mui/material';
 
 type AppMode = 'join' | 'canvas' | 'dual';

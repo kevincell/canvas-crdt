@@ -1,9 +1,9 @@
 import React from 'react';
 import { Box, Typography, Button, Chip } from '@mui/material';
-import { SingleCanvasView } from './SingleCanvasView';
+import { SingleCanvasView } from '../../views/SingleCanvasView';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import SyncAltIcon from '@mui/icons-material/SyncAlt';
-import { sound } from '../utils/audio';
+import { sound } from '../../utils/audio';
 
 interface DualPeerContainerProps {
   roomId: string;

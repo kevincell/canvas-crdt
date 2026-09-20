@@ -1,19 +1,20 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useCanvasCRDT } from '../hooks/useCanvasCRDT';
-import { CanvasRenderer } from '../canvas/CanvasRenderer';
-import { Toolbar } from './Toolbar';
-import { ConflictPanel } from './ConflictPanel';
-import { StatusPanel } from './StatusPanel';
-import { ConnectionBanner } from './ConnectionBanner';
-import { PartitionSimulator } from './PartitionSimulator';
-import { ChatPanel } from './ChatPanel';
-import { DemoTip } from './DemoTip';
-import { DemoShowcaseBar } from './DemoShowcaseBar';
+import { CanvasRenderer } from '../features/canvas/CanvasRenderer';
+import { Toolbar } from '../features/canvas/Toolbar';
+import { StatusPanel } from '../features/crdt/StatusPanel';
+import { ConnectionBanner } from '../features/crdt/ui/ConnectionBanner';
+import { PartitionSimulator } from '../features/crdt/PartitionSimulator';
+import { ChatPanel } from '../features/chat/ChatPanel';
+import { DemoTip } from '../features/demo/DemoTip';
+import { DemoShowcaseBar } from '../features/demo/DemoShowcaseBar';
+import { TimeTravelScrubber } from '../features/crdt/ui/TimeTravelScrubber';
+import { MergeLens, type MergeLensScenario } from '../features/crdt/ui/MergeLens';
 import { Box, Button, Typography, Avatar } from '@mui/material';
 import { type Conflict, type Shape, ShapeKind } from '@crdt-canvas/engine';
 import { sound } from '../utils/audio';
 
-type ToolType = 'stroke' | 'rect' | 'ellipse' | 'line' | 'text' | 'image' | 'note' | 'select' | 'eraser';
+type ToolType = 'stroke' | 'rect' | 'ellipse' | 'line' | 'text' | 'image' | 'note' | 'laser' | 'select' | 'eraser';
 
 interface SingleCanvasViewProps {
   actorName: string;
@@ -44,8 +45,10 @@ export function SingleCanvasView({
   const [historyStep, setHistoryStep] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showConflicts, setShowConflicts] = useState(true);
+  const [showScrubber, setShowScrubber] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showSimulator, setShowSimulator] = useState(false);
+  const [mergeLens, setMergeLens] = useState<MergeLensScenario | null>(null);
   const [canvasScale, setCanvasScale] = useState(1);
   const [showDemoTip, setShowDemoTip] = useState(() => !localStorage.getItem('demoTipShown'));
 
@@ -63,6 +66,7 @@ export function SingleCanvasView({
     connectionState,
     queuedOps,
     remoteCursors,
+    remoteLasers,
     participants,
     canUndo,
     canRedo,
@@ -79,6 +83,7 @@ export function SingleCanvasView({
     deleteShape,
     setCursor,
     setParticipantName,
+    setLaserPoints,
     resolveConflict,
     sendMessage,
     simulateOffline,
@@ -182,6 +187,9 @@ export function SingleCanvasView({
       } else if (e.key === 't' || e.key === 'T') {
         setTool('text');
         sound.playClick();
+      } else if (e.key === 'p' || e.key === 'P') {
+        setTool('laser');
+        sound.playClick();
       } else if (e.key === 'n' || e.key === 'N') {
         setTool('note');
         sound.playClick();
@@ -205,6 +213,7 @@ export function SingleCanvasView({
 
   // 1-Click Guided Demo Actions
   const runUnionBoxDemo = useCallback(() => {
+    setMergeLens('union');
     const id = createRect(180, 160, 200, 120, '#7c3aed');
     if (!id) return;
     setTimeout(() => {
@@ -215,6 +224,7 @@ export function SingleCanvasView({
   }, [createRect, updateShape]);
 
   const runAmbiguityDemo = useCallback(() => {
+    setMergeLens('ambiguity');
     const id = createRect(240, 200, 160, 110, '#f59e0b');
     if (!id) return;
     setTimeout(() => {
@@ -226,16 +236,19 @@ export function SingleCanvasView({
   }, [createRect, updateShape]);
 
   const runHistoryDemo = useCallback(() => {
+    setMergeLens('history');
     createRect(140, 140, 160, 100, '#38bdf8');
     setTimeout(() => createNote(340, 140, 'Collaborative CRDT note', '#1e293b', '#fef3c7'), 200);
     setTimeout(() => createStroke([{ x: 140, y: 290 }, { x: 260, y: 330 }, { x: 380, y: 290 }], '#10b981', 4), 400);
     setTimeout(() => {
+      setShowScrubber(true);
       setIsPlaying(true);
       setHistoryStep(0);
     }, 700);
   }, [createRect, createNote, createStroke]);
 
   const runPartitionDemo = useCallback(() => {
+    setMergeLens('partition');
     simulateOffline();
     setShowSimulator(true);
     setTimeout(() => {
@@ -357,6 +370,7 @@ export function SingleCanvasView({
             shapes={shapes}
             conflicts={conflicts}
             remoteCursors={remoteCursors}
+            remoteLasers={remoteLasers}
             history={history}
             historyStep={historyStep}
             isPlaying={isPlaying}
@@ -378,6 +392,8 @@ export function SingleCanvasView({
             onZoomChange={setCanvasScale}
             onImageDrop={(x, y, w, h, src) => { createImage(x, y, w, h, src); sound.playPop(); }}
             onCursorMove={setCursor}
+            onLaserUpdate={(pts) => setLaserPoints(pts)}
+            onResolveConflict={handleResolveConflict}
           />
 
           {/* Floating Toolbar */}
@@ -405,10 +421,14 @@ export function SingleCanvasView({
             history={history}
             historyStep={historyStep}
             onHistoryChange={setHistoryStep}
-            isPlaying={isPlaying}
+            isPlaying={showScrubber}
             roomId={canvasRoomId || roomId}
             onCopyRoomId={() => { navigator.clipboard.writeText(canvasRoomId || roomId); sound.playClick(); }}
-            setIsPlaying={setIsPlaying}
+            setIsPlaying={(val) => {
+              setShowScrubber(val);
+              if (val) setIsPlaying(true);
+              else setIsPlaying(false);
+            }}
             onResetHistory={() => setHistoryStep(0)}
             onShowConflicts={setShowConflicts}
             showConflicts={showConflicts}
@@ -430,15 +450,7 @@ export function SingleCanvasView({
             />
           )}
 
-          {/* Conflict Resolution Panel */}
-          {conflicts.length > 0 && showConflicts && (
-            <ConflictPanel
-              conflicts={conflicts}
-              shapes={shapes}
-              onResolve={handleResolveConflict}
-              onClose={() => setShowConflicts(false)}
-            />
-          )}
+          {/* Conflict Resolution handled by CanvasRenderer natively */}
 
           {/* Partition Simulator Modal */}
           <PartitionSimulator
@@ -450,6 +462,24 @@ export function SingleCanvasView({
               else if (scenario === 'offline-edit') simulateOffline();
             }}
           />
+
+          {/* Time Travel Scrubber */}
+          {history && showScrubber && (
+            <TimeTravelScrubber
+              historyStep={historyStep}
+              totalSteps={history.totalSteps}
+              isPlaying={isPlaying}
+              onHistoryChange={(step) => {
+                setHistoryStep(step);
+                setIsPlaying(false);
+              }}
+              onPlayPause={() => setIsPlaying(!isPlaying)}
+              onClose={() => {
+                setShowScrubber(false);
+                setIsPlaying(false);
+              }}
+            />
+          )}
 
           {/* Connection status banner */}
           <ConnectionBanner
@@ -472,6 +502,14 @@ export function SingleCanvasView({
             connectionState={connectionState}
             queuedOps={queuedOps}
           />
+
+          {mergeLens && (
+            <MergeLens
+              scenario={mergeLens}
+              compact={isCompact}
+              onClose={() => setMergeLens(null)}
+            />
+          )}
         </Box>
 
         {/* Right collapsible chat sidebar */}

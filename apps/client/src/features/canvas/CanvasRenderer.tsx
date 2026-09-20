@@ -3,7 +3,7 @@
  * cursor awareness, selection handles, eraser, and merge history playback.
  */
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import {
   type Shape,
   type Conflict,
@@ -12,15 +12,18 @@ import {
   shapeCenter,
   shapeBBox,
 } from '@crdt-canvas/engine';
+import { CanvasController } from './CanvasController';
+import { FloatingConflictWidget } from '../crdt/ui/FloatingConflictWidget';
 
 export interface CanvasRenderProps {
   shapes: Shape[];
   conflicts: Conflict[];
   remoteCursors: Map<string, { x: number; y: number; color: string; name: string }>;
+  remoteLasers?: Map<string, { points: { x: number; y: number }[]; color: string }>;
   history: { playback: (step: number) => Shape[]; totalSteps: number } | null;
   historyStep: number;
   isPlaying: boolean;
-  tool: 'stroke' | 'rect' | 'ellipse' | 'line' | 'text' | 'image' | 'note' | 'select' | 'eraser';
+  tool: 'stroke' | 'rect' | 'ellipse' | 'line' | 'text' | 'image' | 'note' | 'laser' | 'select' | 'eraser';
   activeColor: string;
   strokeWidth: number;
   scale: number;
@@ -36,15 +39,18 @@ export interface CanvasRenderProps {
   onShapeMoved?: (id: string, dx: number, dy: number, skipHistory?: boolean) => void;
   onShapeResized?: (id: string, data: Partial<any>, op?: 'resize' | 'move' | 'update', skipHistory?: boolean) => void;
   onShapeHistoryCommit?: (id: string, prevData: any) => void;
-  onZoomChange?: (scale: number) => void;
+  onZoomChange: (scale: number) => void;
   onImageDrop: (x: number, y: number, w: number, h: number, src: string) => void;
   onCursorMove?: (x: number, y: number) => void;
+  onLaserUpdate?: (points: { x: number; y: number }[] | null) => void;
+  onResolveConflict?: (shapeId: string, action: 'merge' | 'keep-local' | 'keep-remote') => void;
 }
 
 export function CanvasRenderer({
   shapes,
   conflicts,
   remoteCursors,
+  remoteLasers,
   history,
   historyStep,
   isPlaying,
@@ -66,6 +72,8 @@ export function CanvasRenderer({
   onZoomChange,
   onImageDrop,
   onCursorMove,
+  onLaserUpdate,
+  onResolveConflict,
 }: CanvasRenderProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -135,262 +143,39 @@ export function CanvasRenderer({
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  const rafIdRef = useRef<number | null>(null);
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  const controllerRef = useRef<CanvasController | null>(null);
+
+  useEffect(() => {
+    if (canvasRef.current && !controllerRef.current) {
+      controllerRef.current = new CanvasController(canvasRef.current);
+    }
+  }, []);
 
   const render = useCallback(() => {
-    if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
-    rafIdRef.current = requestAnimationFrame(() => {
-      rafIdRef.current = null;
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      ctx.scale(dpr, dpr);
-
-    const w = rect.width;
-    const h = rect.height;
-    const { scale: s, offset } = transformRef.current;
-
-    // Background
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(10, 10, 10, 0.6)';
-    ctx.fillRect(0, 0, w, h);
-
-    // Grid
-    drawGrid(ctx, w, h, s, offset);
-
-    ctx.save();
-    ctx.translate(offset.x, offset.y);
-    ctx.scale(s, s);
-
-    const conflictSet = new Set(conflicts.map(c => c.shapeId));
-    const conflictLevelMap = new Map(conflicts.map(c => [c.shapeId, c.level]));
-    const CONFLICT_COLORS: Record<AmbiguityLevel, string> = {
-      none: 'transparent',
-      low: 'rgba(245, 158, 11, 0.25)',
-      medium: 'rgba(239, 68, 68, 0.25)',
-      high: 'rgba(239, 68, 68, 0.5)',
-    };
-
-    const renderShapes = (history && (isPlaying || (historyStep > 0 && historyStep < history.totalSteps)))
-      ? history.playback(historyStep)
-      : shapes;
-
-    // Conflict highlights
-    for (const shape of renderShapes) {
-      const level = conflictLevelMap.get(shape.id);
-      if (level && level !== 'none') {
-        const bbox = shapeBBox(shape);
-        ctx.fillStyle = CONFLICT_COLORS[level];
-        ctx.fillRect(bbox.minX - 6, bbox.minY - 6, bbox.maxX - bbox.minX + 12, bbox.maxY - bbox.minY + 12);
-      }
+    if (controllerRef.current) {
+      controllerRef.current.setProps({
+        shapes,
+        conflicts,
+        remoteCursors,
+        remoteLasers,
+        history,
+        historyStep,
+        isPlaying,
+        tool,
+        activeColor,
+        strokeWidth,
+        scale,
+        transform: transformRef.current,
+        drawing: drawingRef.current,
+        selectedId,
+        imageCache: imageCacheRef.current,
+        onImageLoad: () => render(),
+      });
+      controllerRef.current.requestRender();
     }
-
-    // Shapes
-    for (const shape of renderShapes) {
-      if (shape.deleted) continue;
-      const d = shape.data;
-      const isSel = selectedIdRef.current === shape.id;
-      const isConflict = conflictSet.has(shape.id);
-
-      if (d.kind === ShapeKind.Stroke && d.points?.length >= 2) {
-        ctx.strokeStyle = d.color;
-        ctx.lineWidth = ((d.width as number) ?? strokeWidthRef.current) / scale;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        if (isConflict) ctx.setLineDash([4 / scale, 4 / scale]);
-        ctx.beginPath();
-        ctx.moveTo(d.points[0].x, d.points[0].y);
-        for (let i = 1; i < d.points.length; i++) ctx.lineTo(d.points[i].x, d.points[i].y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-
-      if (d.kind === ShapeKind.Rect) {
-        ctx.fillStyle = d.color + '22';
-        ctx.strokeStyle = d.color;
-        ctx.lineWidth = (isSel ? 2 : 1.5) / scale;
-        if (isConflict) ctx.setLineDash([4 / scale, 4 / scale]);
-        ctx.fillRect(d.x, d.y, d.w, d.h);
-        ctx.strokeRect(d.x, d.y, d.w, d.h);
-        ctx.setLineDash([]);
-      }
-
-      if (d.kind === ShapeKind.Ellipse) {
-        ctx.fillStyle = d.color + '22';
-        ctx.strokeStyle = d.color;
-        ctx.lineWidth = (isSel ? 2 : 1.5) / scale;
-        if (isConflict) ctx.setLineDash([4 / scale, 4 / scale]);
-        ctx.beginPath();
-        ctx.ellipse(d.cx, d.cy, d.rx, d.ry, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-
-      if (d.kind === ShapeKind.Line) {
-        ctx.strokeStyle = d.color;
-        ctx.lineWidth = ((d.width as number) ?? strokeWidthRef.current) / scale;
-        ctx.lineCap = 'round';
-        if (isConflict) ctx.setLineDash([4 / scale, 4 / scale]);
-        ctx.beginPath();
-        ctx.moveTo(d.x1, d.y1);
-        ctx.lineTo(d.x2, d.y2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-
-      if (d.kind === ShapeKind.Text) {
-        ctx.fillStyle = d.color;
-        ctx.font = `bold ${14 / scale}px Inter, sans-serif`;
-        ctx.fillText(d.text, d.x, d.y);
-      }
-
-      if (d.kind === ShapeKind.Image) {
-        const img = imageCacheRef.current.get(d.src);
-        if (img && img.complete && img.naturalWidth > 0) {
-          ctx.drawImage(img, d.x, d.y, d.w, d.h);
-        } else {
-          // Draw placeholder while loading
-          ctx.fillStyle = '#1e1e2e';
-          ctx.fillRect(d.x, d.y, d.w, d.h);
-          ctx.strokeStyle = '#3b82f6';
-          ctx.lineWidth = 1 / scale;
-          ctx.strokeRect(d.x, d.y, d.w, d.h);
-          ctx.fillStyle = '#3b82f6';
-          ctx.font = `${12 / scale}px Inter, sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.fillText('🖼 Image', d.x + d.w / 2, d.y + d.h / 2 + 4 / scale);
-          ctx.textAlign = 'left';
-          // Load image
-          const img2 = new Image();
-          img2.crossOrigin = 'anonymous';
-          img2.onload = () => {
-            imageCacheRef.current.set(d.src, img2);
-            render();
-          };
-          img2.src = d.src;
-        }
-      }
-
-      if (d.kind === ShapeKind.Note) {
-        // Shadow
-        ctx.shadowColor = 'rgba(0,0,0,0.4)';
-        ctx.shadowBlur = 8 / scale;
-        ctx.shadowOffsetY = 3 / scale;
-
-        // Note background
-        ctx.fillStyle = d.bgColor || '#fef3c7';
-        roundRect(ctx, d.x, d.y, d.w, d.h, 4 / scale);
-        ctx.fill();
-
-        ctx.shadowColor = 'transparent';
-        ctx.shadowBlur = 0;
-        ctx.shadowOffsetY = 0;
-
-        // Top accent bar
-        ctx.fillStyle = shadeColor(d.bgColor || '#fef3c7', -30);
-        ctx.fillRect(d.x, d.y, d.w, 4 / scale);
-
-        // Text
-        const fontSize = 13 / scale;
-        ctx.fillStyle = d.color || '#1e293b';
-        ctx.font = `${fontSize}px Inter, sans-serif`;
-        const lines = wrapText(ctx, d.text, d.w - 12 / scale, fontSize);
-        let lineY = d.y + 16 / scale;
-        for (const line of lines) {
-          ctx.fillText(line, d.x + 6 / scale, lineY);
-          lineY += fontSize + 3 / scale;
-        }
-      }
-
-      // Selection
-      if (isSel) {
-        const b = shapeBBox(shape);
-        ctx.strokeStyle = '#7c3aed';
-        ctx.lineWidth = 1.5 / scale;
-        ctx.setLineDash([4 / scale, 4 / scale]);
-        ctx.strokeRect(b.minX - 4, b.minY - 4, b.maxX - b.minX + 8, b.maxY - b.minY + 8);
-        ctx.setLineDash([]);
-        // Handles
-        const handles = [
-          { x: b.minX, y: b.minY },
-          { x: b.maxX, y: b.minY },
-          { x: b.minX, y: b.maxY },
-          { x: b.maxX, y: b.maxY },
-        ];
-        for (const h of handles) {
-          ctx.fillStyle = '#7c3aed';
-          ctx.beginPath();
-          ctx.arc(h.x, h.y, 4 / scale, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    }
-
-    // Live drawing preview
-    const draw = drawingRef.current;
-    if (draw.active && draw.currentPoints.length >= 2) {
-      const pts = draw.currentPoints;
-      const t = toolRef.current;
-      const c = activeColorRef.current;
-      const sw = strokeWidthRef.current;
-
-      if (t === 'stroke' || t === 'eraser') {
-        ctx.strokeStyle = c;
-        ctx.lineWidth = sw / scale;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-        ctx.stroke();
-      } else if (t === 'line' && draw.startPoint) {
-        ctx.strokeStyle = c;
-        ctx.lineWidth = sw / scale;
-        ctx.beginPath();
-        ctx.moveTo(draw.startPoint.x, draw.startPoint.y);
-        ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
-        ctx.stroke();
-      } else if ((t === 'rect' || t === 'ellipse') && draw.startPoint) {
-        ctx.strokeStyle = c;
-        ctx.lineWidth = 1.5 / scale;
-        ctx.setLineDash([4 / scale, 4 / scale]);
-        const sx = draw.startPoint.x, sy = draw.startPoint.y;
-        const ex = pts[pts.length - 1].x, ey = pts[pts.length - 1].y;
-        if (t === 'rect') {
-          ctx.strokeRect(sx, sy, ex - sx, ey - sy);
-        } else {
-          ctx.beginPath();
-          ctx.ellipse((sx + ex) / 2, (sy + ey) / 2, Math.abs(ex - sx) / 2, Math.abs(ey - sy) / 2, 0, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        ctx.setLineDash([]);
-      }
-    }
-
-    // Remote cursors
-    for (const [clientID, cursor] of remoteCursors) {
-      drawCursor(ctx, cursor.x, cursor.y, cursor.color, cursor.name);
-    }
-
-    ctx.restore();
-
-    // History overlay
-    if (history) {
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(10, 10, 185, 26);
-      ctx.fillStyle = '#c4b5fd';
-      ctx.font = '11px Inter, sans-serif';
-      ctx.fillText(`📜 History: ${historyStep}/${history.totalSteps}`, 18, 28);
-    }
-    });
-  }, [shapes, conflicts, remoteCursors, history, historyStep, scale]);
+  }, [shapes, conflicts, remoteCursors, history, historyStep, isPlaying, tool, activeColor, strokeWidth, scale, selectedId]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -619,14 +404,16 @@ export function CanvasRenderer({
         newData.rx = (newBBox.maxX - newBBox.minX) / 2;
         newData.ry = (newBBox.maxY - newBBox.minY) / 2;
       } else if (shape.kind === ShapeKind.Line) {
-        const isX1Left = shape.data.x1 <= shape.data.x2;
-        const isY1Top = shape.data.y1 <= shape.data.y2;
+        const lineData = shape.data as import('@crdt-canvas/engine').LineShape;
+        const isX1Left = lineData.x1 <= lineData.x2;
+        const isY1Top = lineData.y1 <= lineData.y2;
         newData.x1 = isX1Left ? newBBox.minX : newBBox.maxX;
         newData.x2 = isX1Left ? newBBox.maxX : newBBox.minX;
         newData.y1 = isY1Top ? newBBox.minY : newBBox.maxY;
         newData.y2 = isY1Top ? newBBox.maxY : newBBox.minY;
       } else if (shape.kind === ShapeKind.Stroke) {
-        newData.points = shape.data.points.map((p: any) => ({
+        const strokeData = shape.data as import('@crdt-canvas/engine').StrokeShape;
+        newData.points = strokeData.points.map((p: any) => ({
           x: newBBox.minX + (p.x - b.minX) * scaleX,
           y: newBBox.minY + (p.y - b.minY) * scaleY
         }));
@@ -653,7 +440,16 @@ export function CanvasRenderer({
 
     // Live drawing
     if (drawingRef.current.active) {
+      if (toolRef.current === 'laser') {
+        // Keep only the last 30 points to create an ephemeral tail
+        if (drawingRef.current.currentPoints.length > 30) {
+          drawingRef.current.currentPoints.shift();
+        }
+      }
       drawingRef.current.currentPoints.push(pos);
+      if (toolRef.current === 'laser') {
+        onLaserUpdate?.(drawingRef.current.currentPoints);
+      }
       render();
     }
 
@@ -738,6 +534,8 @@ export function CanvasRenderer({
         const ry = Math.abs(last.y - draw.startPoint.y) / 2;
         if (rx > 3 && ry > 3) onEllipseEnd(cx, cy, rx, ry, c);
       }
+    } else if (t === 'laser') {
+      onLaserUpdate?.(null);
     }
 
     drawingRef.current = { active: false, kind: null, startPoint: null, currentPoints: [] };
@@ -974,7 +772,6 @@ export function CanvasRenderer({
         onWheel={handleWheel}
       />
 
-      {/* Text / Note input overlay */}
       {textOverlay && textOverlay.mode === 'text' && (
         <input
           ref={textInputRef}
@@ -1001,6 +798,42 @@ export function CanvasRenderer({
             boxShadow: '0 2px 12px rgba(0,0,0,0.4)',
           }}
         />
+      )}
+
+      {/* Empty State Overlay */}
+      {shapes.filter(s => !s.deleted).length === 0 && !history && (
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          pointerEvents: 'none',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 16,
+          zIndex: 10,
+          animation: 'fadeIn 0.6s ease',
+        }}>
+          <div style={{
+            width: 64, height: 64,
+            borderRadius: '50%',
+            background: 'rgba(124, 58, 237, 0.1)',
+            border: '1px solid rgba(124, 58, 237, 0.2)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 28,
+            boxShadow: '0 0 40px rgba(124, 58, 237, 0.2)',
+          }}>
+            ✨
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: '#e2e2f0', marginBottom: 4 }}>Canvas is empty</div>
+            <div style={{ fontSize: 13, color: '#8888a8', lineHeight: 1.6 }}>
+              Pick a tool to start drawing, drop an image, <br />
+              or press <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4, color: '#a78bfa', fontFamily: 'monospace' }}>?</kbd> for shortcuts
+            </div>
+          </div>
+        </div>
       )}
 
       {textOverlay && textOverlay.mode === 'note' && (
@@ -1146,6 +979,22 @@ export function CanvasRenderer({
           <span style={{ fontSize: 10, color: '#555570' }}>Image will be centered</span>
         </div>
       )}
+
+      {/* Floating Conflict Resolution Widgets */}
+      {onResolveConflict && conflicts.map(conflict => {
+        const shape = shapes.find(s => s.id === conflict.shapeId && !s.deleted);
+        if (!shape) return null;
+        return (
+          <FloatingConflictWidget
+            key={conflict.shapeId}
+            conflict={conflict}
+            shape={shape}
+            scale={transformRef.current.scale}
+            offset={transformRef.current.offset}
+            onResolve={onResolveConflict}
+          />
+        );
+      })}
 
       {/* Keyboard shortcuts overlay */}
       {showShortcuts && (
