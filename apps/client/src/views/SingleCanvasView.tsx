@@ -15,7 +15,7 @@ import { DemoShowcaseBar } from '../features/demo/DemoShowcaseBar';
 import { TimeTravelScrubber } from '../features/crdt/ui/TimeTravelScrubber';
 import { MergeLens, type MergeLensScenario } from '../features/crdt/ui/MergeLens';
 import { Box, Button, Typography, Avatar, Divider } from '@mui/material';
-import { type Conflict, type Shape, type ShapeData, ShapeKind, shapeBBox, shapeCenter, attachedLineEndpoints, frameDescendants } from '@crdt-canvas/engine';
+import { type Conflict, type Shape, type ShapeData, ShapeKind, shapeBBox, shapeCenter, attachedLineEndpoints, frameDescendants, resolveTextOverlap, tidyTextOverlaps } from '@crdt-canvas/engine';
 import { CommentsPanel } from '../features/comments/CommentsPanel';
 import { useBoardComments } from '../features/comments/useBoardComments';
 import { useFacilitation } from '../features/facilitation/useFacilitation';
@@ -423,6 +423,16 @@ export function SingleCanvasView({
       else if (data.kind === ShapeKind.Line) moved = { ...data, x1: data.x1 + dx, y1: data.y1 + dy, x2: data.x2 + dx, y2: data.y2 + dy };
       else if (data.kind === ShapeKind.Stroke) moved = { ...data, points: data.points.map(point => ({ x: point.x + dx, y: point.y + dy })) };
       else moved = { ...data, x: data.x + dx, y: data.y + dy };
+
+      // Resolve text overlap after a final drop
+      if (!skipHistory && moved.kind === ShapeKind.Text) {
+        const resolved = resolveTextOverlap(
+          { x: moved.x, y: moved.y, text: moved.text, id },
+          shapes
+        );
+        moved = { ...moved, y: resolved.y };
+      }
+
       const frameId = frameForData(moved, id);
       updateShape(id, { ...moved, frameId }, 'move', skipHistory);
     }
@@ -542,24 +552,39 @@ export function SingleCanvasView({
         const bText = b.data.kind === ShapeKind.Note ? b.data.text.trim().toLocaleLowerCase() : '';
         return (aText < bText ? -1 : aText > bText ? 1 : 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
       });
-    if (notes.length < 2) return;
-    const columns = Math.ceil(Math.sqrt(notes.length));
-    const rows = Math.ceil(notes.length / columns);
-    const columnWidths = Array.from({ length: columns }, (_, column) => Math.max(...notes.filter((_, index) => index % columns === column).map(note => note.data.kind === ShapeKind.Note ? note.data.w : 0)));
-    const rowHeights = Array.from({ length: rows }, (_, row) => Math.max(...notes.slice(row * columns, (row + 1) * columns).map(note => note.data.kind === ShapeKind.Note ? note.data.h : 0)));
-    const originX = Math.min(...notes.map(note => note.data.kind === ShapeKind.Note ? note.data.x : 0));
-    const originY = Math.min(...notes.map(note => note.data.kind === ShapeKind.Note ? note.data.y : 0));
-    const entries = notes.map((note, index) => {
-      if (note.data.kind !== ShapeKind.Note) return null;
-      const row = Math.floor(index / columns);
-      const column = index % columns;
-      const x = originX + columnWidths.slice(0, column).reduce((sum, width) => sum + width + 24, 0);
-      const y = originY + rowHeights.slice(0, row).reduce((sum, height) => sum + height + 24, 0);
-      const nextData = { ...note.data, x, y };
-      return { id: note.id, prevData: note.data, nextData };
-    }).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-    commitShapeHistoryBatch(entries);
-    doc.transact(() => entries.forEach(entry => updateShape(entry.id, entry.nextData, 'move', true)), 'tidy-sticky-notes');
+    if (notes.length >= 2) {
+      const columns = Math.ceil(Math.sqrt(notes.length));
+      const rows = Math.ceil(notes.length / columns);
+      const columnWidths = Array.from({ length: columns }, (_, column) => Math.max(...notes.filter((_, index) => index % columns === column).map(note => note.data.kind === ShapeKind.Note ? note.data.w : 0)));
+      const rowHeights = Array.from({ length: rows }, (_, row) => Math.max(...notes.slice(row * columns, (row + 1) * columns).map(note => note.data.kind === ShapeKind.Note ? note.data.h : 0)));
+      const originX = Math.min(...notes.map(note => note.data.kind === ShapeKind.Note ? note.data.x : 0));
+      const originY = Math.min(...notes.map(note => note.data.kind === ShapeKind.Note ? note.data.y : 0));
+      const entries = notes.map((note, index) => {
+        if (note.data.kind !== ShapeKind.Note) return null;
+        const row = Math.floor(index / columns);
+        const column = index % columns;
+        const x = originX + columnWidths.slice(0, column).reduce((sum, width) => sum + width + 24, 0);
+        const y = originY + rowHeights.slice(0, row).reduce((sum, height) => sum + height + 24, 0);
+        const nextData = { ...note.data, x, y };
+        return { id: note.id, prevData: note.data, nextData };
+      }).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+      commitShapeHistoryBatch(entries);
+      doc.transact(() => entries.forEach(entry => updateShape(entry.id, entry.nextData, 'move', true)), 'tidy-sticky-notes');
+    }
+
+    // Also tidy all text overlaps across the board
+    const textUpdates = tidyTextOverlaps(shapes);
+    if (textUpdates.size > 0) {
+      const textEntries = Array.from(textUpdates.entries()).map(([id, pos]) => {
+        const shape = shapes.find(s => s.id === id);
+        if (!shape) return null;
+        const nextData = { ...shape.data, ...pos };
+        return { id, prevData: shape.data, nextData };
+      }).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+      commitShapeHistoryBatch(textEntries);
+      doc.transact(() => textEntries.forEach(entry => updateShape(entry.id, entry.nextData as ShapeData, 'move', true)), 'tidy-text-overlaps');
+    }
+
     sound.playSuccess();
   }, [shapes, selectedIds, commitShapeHistoryBatch, doc, updateShape]);
 
@@ -830,7 +855,7 @@ export function SingleCanvasView({
       display: 'flex',
       flexDirection: 'column',
       overflow: 'hidden',
-      background: 'radial-gradient(ellipse at 50% 0%, rgba(124,58,237,0.06) 0%, transparent 60%), #0c0d14',
+      background: '#f8fafc',
       position: 'relative',
     }}>
       {/* Hidden file input for image upload */}
@@ -850,8 +875,8 @@ export function SingleCanvasView({
         alignItems: 'center',
         justifyContent: 'space-between',
         px: 2,
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-        background: 'rgba(14, 15, 23, 0.95)',
+        borderBottom: '1px solid #e2e8f0',
+        background: 'rgba(255, 255, 255, 0.95)',
         backdropFilter: 'blur(16px)',
         zIndex: 40,
       }}>
@@ -876,7 +901,7 @@ export function SingleCanvasView({
               onChange={event => setBoardTitle(event.target.value)}
               onBlur={() => { const title = boardTitle.trim() || roomId; setBoardTitle(title); localStorage.setItem(`crdt-canvas-title-${roomId}`, title); setRenamingBoard(false); }}
               onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setBoardTitle(localStorage.getItem(`crdt-canvas-title-${roomId}`) || roomId); setRenamingBoard(false); } }}
-              style={{ width: 170, padding: '4px 8px', borderRadius: 6, background: 'rgba(255,255,255,.06)', color: '#e2e2f0', border: '1px solid rgba(167,139,250,.45)', outline: 'none', fontSize: 12, fontWeight: 600 }}
+              style={{ width: 170, padding: '4px 8px', borderRadius: 6, background: '#f1f5f9', color: '#0f172a', border: '1px solid #7c3aed', outline: 'none', fontSize: 12, fontWeight: 600 }}
             />
           ) : (
             <button
@@ -884,12 +909,12 @@ export function SingleCanvasView({
               aria-label={`Rename board ${boardTitle}`}
               title="Rename board"
               onClick={() => setRenamingBoard(true)}
-              style={{ padding: '4px 8px', borderRadius: 6, background: 'rgba(255,255,255,.04)', color: '#e2e2f0', border: '1px solid rgba(255,255,255,.08)', fontSize: 12, fontWeight: 600, maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              style={{ padding: '4px 8px', borderRadius: 6, background: '#f1f5f9', color: '#0f172a', border: '1px solid #e2e8f0', fontSize: 12, fontWeight: 600, maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             >{boardTitle}</button>
           )}
-          <Button size="small" onClick={() => setShowBoardDetails(value => !value)} aria-pressed={showBoardDetails} aria-label="Edit board description, workspace, and tags" sx={{ minWidth: 0, px: 1, fontSize: 10, color: showBoardDetails ? '#c4b5fd' : '#8888a8', border: '1px solid rgba(255,255,255,.08)', textTransform: 'none' }}>Details</Button>
-          <Button size="small" onClick={() => void handleDuplicateBoard()} title="Duplicate board into an independent new room without sharing live state" aria-label="Duplicate board" sx={{ minWidth: 0, px: 1, fontSize: 10, color: '#c4b5fd', border: '1px solid rgba(255,255,255,.08)', textTransform: 'none' }}>Duplicate</Button>
-          <Button size="small" onClick={() => setShowTemplates(true)} title="Browse curated board templates" aria-label="Browse curated board templates" sx={{ minWidth: 0, px: 1, fontSize: 10, color: '#a78bfa', border: '1px solid rgba(167,139,250,.25)', textTransform: 'none' }}>Templates</Button>
+          <Button size="small" onClick={() => setShowBoardDetails(value => !value)} aria-pressed={showBoardDetails} aria-label="Edit board description, workspace, and tags" sx={{ minWidth: 0, px: 1, fontSize: 10, color: showBoardDetails ? '#7c3aed' : '#64748b', border: '1px solid #e2e8f0', textTransform: 'none' }}>Details</Button>
+          <Button size="small" onClick={() => void handleDuplicateBoard()} title="Duplicate board into an independent new room without sharing live state" aria-label="Duplicate board" sx={{ minWidth: 0, px: 1, fontSize: 10, color: '#7c3aed', border: '1px solid #ddd6fe', textTransform: 'none' }}>Duplicate</Button>
+          <Button size="small" onClick={() => setShowTemplates(true)} title="Browse curated board templates" aria-label="Browse curated board templates" sx={{ minWidth: 0, px: 1, fontSize: 10, color: '#6d28d9', border: '1px solid #ddd6fe', textTransform: 'none' }}>Templates</Button>
           <Button
             size="small"
             onClick={() => {
@@ -932,14 +957,14 @@ export function SingleCanvasView({
             display: 'flex',
             alignItems: 'center',
             gap: 0.75,
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'rgba(124, 58, 237, 0.06)',
+            border: '1px solid rgba(124, 58, 237, 0.15)',
             borderRadius: '12px',
             px: 1.25,
             py: 0.25,
           }}>
-            <Typography sx={{ fontSize: 11, color: '#8888a8', fontWeight: 500 }}>Room:</Typography>
-            <Typography sx={{ fontSize: 11, color: '#c4b5fd', fontWeight: 600, fontFamily: 'monospace' }}>
+            <Typography sx={{ fontSize: 11, color: '#64748b', fontWeight: 500 }}>Room:</Typography>
+            <Typography sx={{ fontSize: 11, color: '#7c3aed', fontWeight: 600, fontFamily: 'monospace' }}>
               {canvasRoomId || roomId}
             </Typography>
           </Box>
@@ -987,7 +1012,7 @@ export function SingleCanvasView({
             >
               {actorName.slice(0, 1).toUpperCase()}
             </Avatar>
-            <Typography sx={{ fontSize: 12, color: '#e2e2f0', fontWeight: 600 }}>
+            <Typography sx={{ fontSize: 12, color: '#0f172a', fontWeight: 600 }}>
               {actorName}
             </Typography>
           </Box>
@@ -1052,7 +1077,7 @@ export function SingleCanvasView({
               assignCreatedShapeToFrame(id, { kind: ShapeKind.Line, x1, y1, x2, y2, color: c, width: w, arrowEnd, startShapeId, endShapeId });
               sound.playPop();
             }}
-            onTextSubmit={(x, y, text, c) => { const id = createText(x, y, text, c); assignCreatedShapeToFrame(id, { kind: ShapeKind.Text, x, y, text, color: c }); sound.playPop(); }}
+            onTextSubmit={(x, y, text, c) => { const pos = resolveTextOverlap({ x, y, text }, shapes); const id = createText(pos.x, pos.y, text, c); assignCreatedShapeToFrame(id, { kind: ShapeKind.Text, x: pos.x, y: pos.y, text, color: c }); sound.playPop(); }}
             onImageAdd={(x, y, w, h, src) => { const id = createImage(x, y, w, h, src); assignCreatedShapeToFrame(id, { kind: ShapeKind.Image, x, y, w, h, src }); sound.playPop(); }}
             onNoteAdd={(x, y, text, c, bg) => { const id = createNote(x, y, text, c, bg); assignCreatedShapeToFrame(id, { kind: ShapeKind.Note, x, y, w: 160, h: 140, text, color: c, bgColor: bg }); sound.playPop(); }}
             onDelete={deleteUnlockedShape}

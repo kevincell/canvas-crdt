@@ -15,6 +15,7 @@ import {
   attachedLineEndpoints,
   frameDescendants,
   scaleFrameMember,
+  resolveTextOverlap,
 } from '@crdt-canvas/engine';
 import { CanvasController } from './CanvasController';
 import { FloatingConflictWidget } from '../crdt/ui/FloatingConflictWidget';
@@ -1039,10 +1040,14 @@ export function CanvasRenderer({
       if (textOverlay.shapeId) {
         const shape = shapesRef.current.find(item => item.id === textOverlay.shapeId);
         if (shape?.data.kind === ShapeKind.Rect && shape.data.frameTitle) onShapeResized?.(textOverlay.shapeId, { frameTitle: val || 'Frame' }, 'update');
-        else if (val) onShapeResized?.(textOverlay.shapeId, { text: val, color: textOverlay.color }, 'update');
+        else if (val) {
+          const resolved = resolveTextOverlap({ x: textOverlay.x, y: textOverlay.y + 18, text: val, id: textOverlay.shapeId }, shapesRef.current);
+          onShapeResized?.(textOverlay.shapeId, { text: val, color: textOverlay.color, y: resolved.y }, 'update');
+        }
         else onDelete?.(textOverlay.shapeId);
       } else if (val) {
-        onTextSubmit(textOverlay.x, textOverlay.y + 18, val, textOverlay.color);
+        const resolved = resolveTextOverlap({ x: textOverlay.x, y: textOverlay.y + 18, text: val }, shapesRef.current);
+        onTextSubmit(resolved.x, resolved.y, val, textOverlay.color);
       }
     }
     setTextOverlay(null);
@@ -1232,13 +1237,14 @@ export function CanvasRenderer({
         top: 12,
         left: 16,
         padding: '4px 10px',
-        background: 'rgba(15, 15, 22, 0.85)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'rgba(255, 255, 255, 0.92)',
+        border: '1px solid rgba(0, 0, 0, 0.1)',
         borderRadius: 6,
         fontSize: 11,
-        color: '#8888a8',
+        color: '#475569',
         zIndex: 90,
         backdropFilter: 'blur(8px)',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
         display: 'flex',
         alignItems: 'center',
         gap: 6,
@@ -1249,8 +1255,8 @@ export function CanvasRenderer({
           background: tool === 'select' ? '#10b981' : tool === 'eraser' ? '#ef4444' : '#7c3aed',
           display: 'inline-block',
         }} />
-        <span style={{ fontWeight: 600, color: voteMode ? '#fbbf24' : '#c4b5fd', textTransform: 'capitalize' }}>{voteMode ? 'vote on objects' : tool}</span>
-        <span style={{ color: '#555570' }}>·</span>
+        <span style={{ fontWeight: 600, color: voteMode ? '#d97706' : '#7c3aed', textTransform: 'capitalize' }}>{voteMode ? 'vote on objects' : tool}</span>
+        <span style={{ color: '#94a3b8' }}>·</span>
         <span>{Math.round(scale * 100)}%</span>
       </div>
       <canvas
@@ -1286,12 +1292,12 @@ export function CanvasRenderer({
             position: 'absolute',
             left: textOverlay.x * transformRef.current.scale + transformRef.current.offset.x,
             top: textOverlay.y * transformRef.current.scale + transformRef.current.offset.y,
-            padding: '4px 8px',
-            background: 'rgba(30, 30, 46, 0.97)',
-            border: '1px solid rgba(124, 58, 237, 0.6)',
+            padding: '6px 10px',
+            background: '#ffffff',
+            border: '2px solid #7c3aed',
             borderRadius: 6,
-            color: textOverlay.color,
-            fontSize: Math.max(12, 14 * transformRef.current.scale),
+            color: (textOverlay.color === '#ffffff' || textOverlay.color === '#fff') ? '#0f172a' : textOverlay.color,
+            fontSize: Math.max(13, 15 * transformRef.current.scale),
             outline: 'none',
             minWidth: Math.max(180, 180 * transformRef.current.scale),
             zIndex: 50,
@@ -1299,7 +1305,7 @@ export function CanvasRenderer({
             lineHeight: 1.4,
             resize: 'both',
             overflow: 'hidden',
-            boxShadow: '0 2px 12px rgba(0,0,0,0.4)',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
           }}
         />
       )}
@@ -1331,10 +1337,10 @@ export function CanvasRenderer({
             ✨
           </div>
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 16, fontWeight: 600, color: '#e2e2f0', marginBottom: 4 }}>Canvas is empty</div>
-            <div style={{ fontSize: 13, color: '#8888a8', lineHeight: 1.6 }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: '#1e293b', marginBottom: 4 }}>Canvas is empty</div>
+            <div style={{ fontSize: 13, color: '#64748b', lineHeight: 1.6 }}>
               Pick a tool to start drawing, drop an image, <br />
-              or press <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4, color: '#a78bfa', fontFamily: 'monospace' }}>?</kbd> for shortcuts
+              or press <kbd style={{ background: 'rgba(0,0,0,0.06)', border: '1px solid rgba(0,0,0,0.1)', padding: '2px 6px', borderRadius: 4, color: '#7c3aed', fontFamily: 'monospace' }}>?</kbd> for shortcuts
             </div>
           </div>
         </div>

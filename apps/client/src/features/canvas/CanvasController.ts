@@ -82,9 +82,9 @@ export class CanvasController {
     const h = rect.height;
     const { scale: s, offset } = props.transform;
 
-    // Background
+    // Canvas background - clean whiteboard
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(10, 10, 10, 0.6)';
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, w, h);
 
     if (props.showGrid) this.drawGrid(w, h, s, offset);
@@ -192,7 +192,7 @@ export class CanvasController {
         }
         ctx.setLineDash([]);
         if (d.frameTitle) {
-          ctx.fillStyle = d.color;
+          ctx.fillStyle = (d.color === '#ffffff' || d.color === '#fff') ? '#334155' : d.color;
           ctx.font = `600 ${14 / s}px Inter, sans-serif`;
           ctx.textBaseline = 'bottom';
           ctx.fillText(d.frameTitle, d.x, d.y - 5 / s);
@@ -226,7 +226,8 @@ export class CanvasController {
       }
 
       if (d.kind === ShapeKind.Text) {
-        ctx.fillStyle = d.color;
+        const textColor = (d.color === '#ffffff' || d.color === '#fff') ? '#0f172a' : d.color;
+        ctx.fillStyle = textColor;
         ctx.font = `500 16px Inter, sans-serif`;
         ctx.textBaseline = 'top';
         d.text.split('\n').forEach((line, index) => ctx.fillText(line, d.x, d.y - 16 + index * 20));
@@ -238,12 +239,12 @@ export class CanvasController {
         if (img && img.complete && img.naturalWidth > 0) {
           ctx.drawImage(img, d.x, d.y, d.w, d.h);
         } else {
-          ctx.fillStyle = '#1e1e2e';
+          ctx.fillStyle = '#f1f5f9';
           ctx.fillRect(d.x, d.y, d.w, d.h);
-          ctx.strokeStyle = '#3b82f6';
+          ctx.strokeStyle = '#cbd5e1';
           ctx.lineWidth = 1 / s;
           ctx.strokeRect(d.x, d.y, d.w, d.h);
-          ctx.fillStyle = '#3b82f6';
+          ctx.fillStyle = '#64748b';
           ctx.font = `${12 / s}px Inter, sans-serif`;
           ctx.textAlign = 'center';
           ctx.fillText('🖼 Image', d.x + d.w / 2, d.y + d.h / 2 + 4 / s);
@@ -526,7 +527,7 @@ export class CanvasController {
   private drawGrid(w: number, h: number, zoom: number, off: { x: number; y: number }) {
     const dotSpacing = 32;
     const dotRadius = Math.max(0.8 / zoom, 1.2);
-    this.ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    this.ctx.fillStyle = 'rgba(100, 116, 139, 0.22)';
     const startX = Math.floor(-off.x / dotSpacing / zoom) * dotSpacing;
     const startY = Math.floor(-off.y / dotSpacing / zoom) * dotSpacing;
     const endX = startX + w / zoom + dotSpacing * 2;

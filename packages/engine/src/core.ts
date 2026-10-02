@@ -306,6 +306,118 @@ export function scaleFrameMember(
   return { ...data, x: mapX(data.x), y: mapY(data.y) };
 }
 
+/**
+ * Automatically adjusts text coordinates to prevent overlap with existing text shapes.
+ * If candidate text overlaps an existing text element, nudges it above or below based on
+ * relative vertical proximity, preserving a readable margin.
+ */
+export function resolveTextOverlap(
+  candidate: { x: number; y: number; text: string; id?: string },
+  shapes: Shape[],
+  margin: number = 8,
+  preferredDirection: 'auto' | 'above' | 'below' = 'auto'
+): { x: number; y: number } {
+  let { x, y } = candidate;
+  const lines = candidate.text.split('\n');
+  const candW = Math.max(1, ...lines.map(line => line.length)) * 9;
+  const candH = Math.max(1, lines.length) * 20;
+
+  const otherTexts = shapes.filter(s =>
+    !s.deleted &&
+    s.id !== candidate.id &&
+    s.data.kind === ShapeKind.Text
+  );
+
+  if (otherTexts.length === 0) return { x, y };
+
+  let resolved = false;
+  let attempts = 0;
+  let direction: 'above' | 'below' | null = preferredDirection === 'auto' ? null : preferredDirection;
+
+  while (!resolved && attempts < 25) {
+    attempts++;
+    resolved = true;
+
+    const candMinX = x;
+    const candMaxX = x + candW;
+    const candMinY = y - 16;
+    const candMaxY = y - 16 + candH;
+    const candCenterY = candMinY + candH / 2;
+
+    for (const other of otherTexts) {
+      const oData = other.data as TextShape;
+      const oLines = oData.text.split('\n');
+      const oW = Math.max(1, ...oLines.map(line => line.length)) * 9;
+      const oH = Math.max(1, oLines.length) * 20;
+      const oMinX = oData.x;
+      const oMaxX = oData.x + oW;
+      const oMinY = oData.y - 16;
+      const oMaxY = oData.y - 16 + oH;
+      const oCenterY = oMinY + oH / 2;
+
+      // Overlap with margin
+      const xOverlap = candMinX < oMaxX + 4 && candMaxX > oMinX - 4;
+      const yOverlap = candMinY < oMaxY + margin && candMaxY > oMinY - margin;
+
+      if (xOverlap && yOverlap) {
+        resolved = false;
+        if (!direction) {
+          direction = candCenterY <= oCenterY ? 'above' : 'below';
+        }
+        if (direction === 'above') {
+          y = oMinY - margin - candH + 16;
+        } else {
+          y = oMaxY + margin + 16;
+        }
+        break;
+      }
+    }
+  }
+
+  return { x, y };
+}
+
+/**
+ * Scans all active text shapes on the board and resolves any overlapping text by
+ * cascading them vertically above or below so all text remains completely legible.
+ * Returns a map of shape IDs to their new non-overlapping coordinates.
+ */
+export function tidyTextOverlaps(
+  shapes: Shape[],
+  margin: number = 8
+): Map<string, { x: number; y: number }> {
+  const updates = new Map<string, { x: number; y: number }>();
+  const activeTexts = shapes.filter(s => !s.deleted && s.data.kind === ShapeKind.Text);
+  if (activeTexts.length <= 1) return updates;
+
+  // Clone positions for resolution
+  const simulated: Array<{ id: string; x: number; y: number; text: string }> = activeTexts.map(s => {
+    const d = s.data as TextShape;
+    return { id: s.id, x: d.x, y: d.y, text: d.text };
+  });
+
+  // Sort primarily by vertical Y position
+  simulated.sort((a, b) => a.y - b.y);
+
+  for (let i = 0; i < simulated.length; i++) {
+    const cur = simulated[i];
+    const prevShapes = simulated.slice(0, i).map(s => ({
+      id: s.id,
+      deleted: false,
+      data: { kind: ShapeKind.Text, x: s.x, y: s.y, text: s.text } as TextShape,
+    })) as Shape[];
+
+    const resolved = resolveTextOverlap({ x: cur.x, y: cur.y, text: cur.text, id: cur.id }, prevShapes, margin, 'below');
+    if (resolved.y !== cur.y) {
+      cur.y = resolved.y;
+      updates.set(cur.id, { x: cur.x, y: cur.y });
+    }
+  }
+
+  return updates;
+}
+
+
 
 // ─── Ambiguity Classification (Novel Contribution) ──────────────────────────
 

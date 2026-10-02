@@ -18,8 +18,8 @@
   --warning: #f59e0b;
   --success: #10b981;
   --info: #3b82f6;
-  --canvas-bg: #0a0a0a;
-  --canvas-grid: rgba(229, 57, 53, 0.08);
+  --canvas-bg: #ffffff;
+  --canvas-grid: rgba(100, 116, 139, 0.18);
 }
 
 html, body, #root {

@@ -40,8 +40,8 @@ const TOOLS = [
 ] as const;
 
 const COLORS = [
-  '#ef4444', '#f59e0b', '#10b981', '#3b82f6',
-  '#7c3aed', '#ec4899', '#ffffff', '#94a3b8',
+  '#1e293b', '#ef4444', '#f59e0b', '#10b981',
+  '#3b82f6', '#7c3aed', '#ec4899', '#64748b',
 ];
 
 interface ToolbarProps {
