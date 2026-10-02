@@ -40,6 +40,12 @@ export default function App() {
     setMode('join');
   }, []);
 
+  const handleSwitchRoom = useCallback((newRoom: string) => {
+    setRoomId(newRoom);
+    localStorage.setItem('crdt-canvas-last-room', newRoom);
+    setMode('canvas');
+  }, []);
+
   const handleToggleSplit = useCallback(() => {
     setMode(m => (m === 'dual' ? 'canvas' : 'dual'));
   }, []);
@@ -73,6 +79,7 @@ export default function App() {
           roomId={roomId || 'demo-room'}
           initialColor={activeColor}
           onLeave={handleLeave}
+          onSwitchRoom={handleSwitchRoom}
           onToggleSplitScreen={handleToggleSplit}
           isSplitScreen={false}
           hideShowcase={false}

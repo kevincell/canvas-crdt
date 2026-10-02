@@ -4,6 +4,7 @@ import {
   type AmbiguityLevel,
   ShapeKind,
   shapeBBox,
+  attachedLineEndpoints,
 } from '@crdt-canvas/engine';
 
 export interface CanvasControllerProps {
@@ -11,12 +12,18 @@ export interface CanvasControllerProps {
   conflicts: Conflict[];
   remoteCursors: Map<string, { x: number; y: number; color: string; name: string }>;
   remoteLasers?: Map<string, { points: { x: number; y: number }[]; color: string }>;
+  commentPins: Array<{ x: number; y: number }>;
   history: { playback: (step: number) => Shape[]; totalSteps: number } | null;
   historyStep: number;
   isPlaying: boolean;
   tool: string;
   activeColor: string;
   strokeWidth: number;
+  fillOpacity: number;
+  cornerRadius: number;
+  showGrid: boolean;
+  voteMode: boolean;
+  voteCounts: Map<string, number>;
   scale: number;
   transform: { scale: number; offset: { x: number; y: number } };
   drawing: {
@@ -26,6 +33,9 @@ export interface CanvasControllerProps {
     currentPoints: { x: number; y: number }[];
   };
   selectedId: string | null;
+  selectedIds: string[];
+  highlightShapeId?: string | null;
+  alignmentGuides: Array<{ x1: number; y1: number; x2: number; y2: number; kind: 'alignment' | 'spacing'; label?: string }>;
   imageCache: Map<string, HTMLImageElement>;
   onImageLoad: () => void;
 }
@@ -35,6 +45,9 @@ export class CanvasController {
   private ctx: CanvasRenderingContext2D;
   private rafId: number | null = null;
   private props: CanvasControllerProps | null = null;
+  private cachedShapeSource: Shape[] | null = null;
+  private cachedOrderedShapes: Shape[] = [];
+  private boundsCache = new WeakMap<Shape, { minX: number; minY: number; maxX: number; maxY: number }>();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -59,9 +72,11 @@ export class CanvasController {
 
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
+    const pixelWidth = Math.max(1, Math.round(rect.width * dpr));
+    const pixelHeight = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const w = rect.width;
     const h = rect.height;
@@ -72,7 +87,7 @@ export class CanvasController {
     ctx.fillStyle = 'rgba(10, 10, 10, 0.6)';
     ctx.fillRect(0, 0, w, h);
 
-    this.drawGrid(w, h, s, offset);
+    if (props.showGrid) this.drawGrid(w, h, s, offset);
 
     ctx.save();
     ctx.translate(offset.x, offset.y);
@@ -90,9 +105,50 @@ export class CanvasController {
     const renderShapes = (props.history && (props.isPlaying || (props.historyStep > 0 && props.historyStep < props.history.totalSteps)))
       ? props.history.playback(props.historyStep)
       : props.shapes;
+    let orderedShapes: Shape[];
+    if (renderShapes === props.shapes) {
+      if (this.cachedShapeSource !== renderShapes) {
+        this.cachedShapeSource = renderShapes;
+        this.cachedOrderedShapes = renderShapes.map((shape, index) => ({ shape, index }))
+          .sort((a, b) => (a.shape.data.zIndex ?? a.index) - (b.shape.data.zIndex ?? b.index) || a.index - b.index)
+          .map(({ shape }) => shape);
+      }
+      orderedShapes = this.cachedOrderedShapes;
+    } else {
+      orderedShapes = renderShapes.map((shape, index) => ({ shape, index }))
+        .sort((a, b) => (a.shape.data.zIndex ?? a.index) - (b.shape.data.zIndex ?? b.index) || a.index - b.index)
+        .map(({ shape }) => shape);
+    }
+
+    // Only paint objects touching the viewport. The small world-space margin
+    // keeps stroke edges and selection borders from popping at the boundary.
+    const margin = 64 / Math.max(s, 0.1);
+    const viewport = {
+      minX: -offset.x / s - margin,
+      minY: -offset.y / s - margin,
+      maxX: (w - offset.x) / s + margin,
+      maxY: (h - offset.y) / s + margin,
+    };
+    const targetShapes = new Map(renderShapes.filter(shape => !shape.deleted).map(shape => [shape.id, shape]));
+    const resolvedShapes = orderedShapes.map(shape => {
+      if (shape.data.kind !== ShapeKind.Line || (!shape.data.startShapeId && !shape.data.endShapeId)) return shape;
+      const endpoints = attachedLineEndpoints(shape.data, targetShapes);
+      if (endpoints.start.x === shape.data.x1 && endpoints.start.y === shape.data.y1 && endpoints.end.x === shape.data.x2 && endpoints.end.y === shape.data.y2) return shape;
+      return { ...shape, data: { ...shape.data, x1: endpoints.start.x, y1: endpoints.start.y, x2: endpoints.end.x, y2: endpoints.end.y } };
+    });
+    const visibleShapes = resolvedShapes.filter(shape => {
+      if (shape.deleted) return false;
+      let bounds = this.boundsCache.get(shape);
+      if (!bounds) {
+        bounds = shapeBBox(shape);
+        this.boundsCache.set(shape, bounds);
+      }
+      return bounds.maxX >= viewport.minX && bounds.minX <= viewport.maxX
+        && bounds.maxY >= viewport.minY && bounds.minY <= viewport.maxY;
+    });
 
     // Conflict highlights
-    for (const shape of renderShapes) {
+    for (const shape of visibleShapes) {
       const level = conflictLevelMap.get(shape.id);
       if (level && level !== 'none') {
         const bbox = shapeBBox(shape);
@@ -102,10 +158,9 @@ export class CanvasController {
     }
 
     // Shapes
-    for (const shape of renderShapes) {
-      if (shape.deleted) continue;
+    for (const shape of visibleShapes) {
       const d = shape.data;
-      const isSel = props.selectedId === shape.id;
+      const isSel = props.selectedIds.includes(shape.id) || props.selectedId === shape.id;
       const isConflict = conflictSet.has(shape.id);
 
       if (d.kind === ShapeKind.Stroke && d.points?.length >= 2) {
@@ -122,19 +177,33 @@ export class CanvasController {
       }
 
       if (d.kind === ShapeKind.Rect) {
-        ctx.fillStyle = d.color + '22';
+        ctx.fillStyle = this.withAlpha(d.color, d.fillOpacity ?? 0.13);
         ctx.strokeStyle = d.color;
-        ctx.lineWidth = (isSel ? 2 : 1.5) / s;
-        if (isConflict) ctx.setLineDash([4 / s, 4 / s]);
-        ctx.fillRect(d.x, d.y, d.w, d.h);
-        ctx.strokeRect(d.x, d.y, d.w, d.h);
+        ctx.lineWidth = (isSel ? 2 : (d.strokeWidth ?? props.strokeWidth)) / s;
+        if (d.frameTitle) ctx.setLineDash([8 / s, 5 / s]);
+        else if (isConflict) ctx.setLineDash([4 / s, 4 / s]);
+        if ((d.cornerRadius ?? 0) > 0) {
+          this.roundRect(d.x, d.y, d.w, d.h, (d.cornerRadius ?? 0) / s);
+          ctx.fill();
+          ctx.stroke();
+        } else {
+          ctx.fillRect(d.x, d.y, d.w, d.h);
+          ctx.strokeRect(d.x, d.y, d.w, d.h);
+        }
         ctx.setLineDash([]);
+        if (d.frameTitle) {
+          ctx.fillStyle = d.color;
+          ctx.font = `600 ${14 / s}px Inter, sans-serif`;
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(d.frameTitle, d.x, d.y - 5 / s);
+          ctx.textBaseline = 'alphabetic';
+        }
       }
 
       if (d.kind === ShapeKind.Ellipse) {
-        ctx.fillStyle = d.color + '22';
+        ctx.fillStyle = this.withAlpha(d.color, d.fillOpacity ?? 0.13);
         ctx.strokeStyle = d.color;
-        ctx.lineWidth = (isSel ? 2 : 1.5) / s;
+        ctx.lineWidth = (isSel ? 2 : (d.strokeWidth ?? props.strokeWidth)) / s;
         if (isConflict) ctx.setLineDash([4 / s, 4 / s]);
         ctx.beginPath();
         ctx.ellipse(d.cx, d.cy, d.rx, d.ry, 0, 0, Math.PI * 2);
@@ -152,13 +221,16 @@ export class CanvasController {
         ctx.moveTo(d.x1, d.y1);
         ctx.lineTo(d.x2, d.y2);
         ctx.stroke();
+        if (d.arrowEnd) this.drawArrowHead(d.x1, d.y1, d.x2, d.y2, 12 / s);
         ctx.setLineDash([]);
       }
 
       if (d.kind === ShapeKind.Text) {
         ctx.fillStyle = d.color;
-        ctx.font = `bold ${14 / s}px Inter, sans-serif`;
-        ctx.fillText(d.text, d.x, d.y);
+        ctx.font = `500 16px Inter, sans-serif`;
+        ctx.textBaseline = 'top';
+        d.text.split('\n').forEach((line, index) => ctx.fillText(line, d.x, d.y - 16 + index * 20));
+        ctx.textBaseline = 'alphabetic';
       }
 
       if (d.kind === ShapeKind.Image) {
@@ -216,11 +288,11 @@ export class CanvasController {
       if (isSel) {
         const b = shapeBBox(shape);
         ctx.strokeStyle = '#7c3aed';
-        ctx.lineWidth = 1.5 / s;
+        ctx.lineWidth = props.strokeWidth / s;
         ctx.setLineDash([4 / s, 4 / s]);
         ctx.strokeRect(b.minX - 4, b.minY - 4, b.maxX - b.minX + 8, b.maxY - b.minY + 8);
         ctx.setLineDash([]);
-        const handles = [
+        const handles = props.selectedIds.length > 1 ? [] : [
           { x: b.minX, y: b.minY },
           { x: b.maxX, y: b.minY },
           { x: b.minX, y: b.maxY },
@@ -233,6 +305,113 @@ export class CanvasController {
           ctx.fill();
         }
       }
+      if (d.locked) {
+        const bounds = shapeBBox(shape);
+        ctx.fillStyle = 'rgba(15, 15, 22, 0.88)';
+        ctx.beginPath();
+        ctx.arc(bounds.maxX - 4 / s, bounds.minY + 4 / s, 8 / s, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = `${10 / s}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🔒', bounds.maxX - 4 / s, bounds.minY + 4 / s);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+      }
+      const voteCount = props.voteCounts.get(shape.id) ?? 0;
+      if (voteCount > 0) {
+        const bounds = shapeBBox(shape);
+        const badgeWidth = 30 / s;
+        const badgeHeight = 19 / s;
+        const badgeX = bounds.maxX - badgeWidth / 2;
+        const badgeY = bounds.minY - badgeHeight / 2;
+        ctx.fillStyle = props.voteMode ? '#7c3aed' : '#713f12';
+        this.roundRect(badgeX, badgeY, badgeWidth, badgeHeight, 7 / s);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = `700 ${10 / s}px Inter, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`● ${voteCount}`, badgeX + badgeWidth / 2, badgeY + badgeHeight / 2);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+      }
+
+      if (props.highlightShapeId === shape.id) {
+        const bounds = shapeBBox(shape);
+        const pad = 10 / s;
+        ctx.save();
+        ctx.shadowColor = '#ec4899';
+        ctx.shadowBlur = 18;
+        ctx.strokeStyle = '#f43f5e';
+        ctx.lineWidth = 3 / s;
+        this.roundRect(bounds.minX - pad, bounds.minY - pad, bounds.maxX - bounds.minX + pad * 2, bounds.maxY - bounds.minY + pad * 2, 8 / s);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(244, 63, 94, 0.12)';
+        ctx.fill();
+        ctx.restore();
+
+        // Corner beacon accents
+        ctx.save();
+        ctx.strokeStyle = '#fda4af';
+        ctx.lineWidth = 2.5 / s;
+        const cornerLen = Math.min(16 / s, Math.max(6 / s, (bounds.maxX - bounds.minX) / 4));
+        ctx.beginPath();
+        ctx.moveTo(bounds.minX - pad, bounds.minY - pad + cornerLen);
+        ctx.lineTo(bounds.minX - pad, bounds.minY - pad);
+        ctx.lineTo(bounds.minX - pad + cornerLen, bounds.minY - pad);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(bounds.maxX + pad - cornerLen, bounds.minY - pad);
+        ctx.lineTo(bounds.maxX + pad, bounds.minY - pad);
+        ctx.lineTo(bounds.maxX + pad, bounds.minY - pad + cornerLen);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(bounds.minX - pad, bounds.maxY + pad - cornerLen);
+        ctx.lineTo(bounds.minX - pad, bounds.maxY + pad);
+        ctx.lineTo(bounds.minX - pad + cornerLen, bounds.maxY + pad);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(bounds.maxX + pad - cornerLen, bounds.maxY + pad);
+        ctx.lineTo(bounds.maxX + pad, bounds.maxY + pad);
+        ctx.lineTo(bounds.maxX + pad, bounds.maxY + pad - cornerLen);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    if (props.alignmentGuides.length) {
+      ctx.save();
+      for (const guide of props.alignmentGuides) {
+        ctx.strokeStyle = guide.kind === 'spacing' ? 'rgba(251, 191, 36, 0.95)' : 'rgba(52, 211, 153, 0.95)';
+        ctx.fillStyle = guide.kind === 'spacing' ? '#fbbf24' : '#6ee7b7';
+        ctx.lineWidth = (guide.kind === 'spacing' ? 1.5 : 1) / s;
+        ctx.setLineDash(guide.kind === 'spacing' ? [] : [5 / s, 4 / s]);
+        ctx.beginPath();
+        ctx.moveTo(guide.x1, guide.y1);
+        ctx.lineTo(guide.x2, guide.y2);
+        if (guide.kind === 'spacing') {
+          const horizontal = Math.abs(guide.y2 - guide.y1) < Math.abs(guide.x2 - guide.x1);
+          const tick = 4 / s;
+          if (horizontal) {
+            ctx.moveTo(guide.x1, guide.y1 - tick); ctx.lineTo(guide.x1, guide.y1 + tick);
+            ctx.moveTo(guide.x2, guide.y2 - tick); ctx.lineTo(guide.x2, guide.y2 + tick);
+          } else {
+            ctx.moveTo(guide.x1 - tick, guide.y1); ctx.lineTo(guide.x1 + tick, guide.y1);
+            ctx.moveTo(guide.x2 - tick, guide.y2); ctx.lineTo(guide.x2 + tick, guide.y2);
+          }
+        }
+        ctx.stroke();
+        if (guide.label) {
+          ctx.setLineDash([]);
+          ctx.font = `600 ${10 / s}px Inter, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(guide.label, (guide.x1 + guide.x2) / 2, (guide.y1 + guide.y2) / 2 - 8 / s);
+        }
+      }
+      ctx.restore();
     }
 
     const draw = props.drawing;
@@ -259,22 +438,35 @@ export class CanvasController {
           ctx.shadowColor = 'transparent';
           ctx.shadowBlur = 0;
         }
-      } else if (t === 'line' && draw.startPoint) {
+      } else if ((t === 'line' || t === 'arrow') && draw.startPoint) {
         ctx.strokeStyle = c;
         ctx.lineWidth = sw / s;
         ctx.beginPath();
         ctx.moveTo(draw.startPoint.x, draw.startPoint.y);
         ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
         ctx.stroke();
+        if (t === 'arrow') this.drawArrowHead(draw.startPoint.x, draw.startPoint.y, pts[pts.length - 1].x, pts[pts.length - 1].y, 12 / s);
       } else if ((t === 'rect' || t === 'ellipse') && draw.startPoint) {
         ctx.strokeStyle = c;
-        ctx.lineWidth = 1.5 / s;
+        ctx.lineWidth = props.strokeWidth / s;
         ctx.setLineDash([4 / s, 4 / s]);
+        ctx.fillStyle = this.withAlpha(c, props.fillOpacity);
         const sx = draw.startPoint.x, sy = draw.startPoint.y;
         const ex = pts[pts.length - 1].x, ey = pts[pts.length - 1].y;
         if (t === 'rect') {
-          ctx.strokeRect(sx, sy, ex - sx, ey - sy);
+          const x = Math.min(sx, ex), y = Math.min(sy, ey), w = Math.abs(ex - sx), h = Math.abs(ey - sy);
+          if (props.cornerRadius > 0) {
+            this.roundRect(x, y, w, h, props.cornerRadius / s);
+            ctx.fill();
+            ctx.stroke();
+          } else {
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeRect(x, y, w, h);
+          }
         } else {
+          ctx.beginPath();
+          ctx.ellipse((sx + ex) / 2, (sy + ey) / 2, Math.abs(ex - sx) / 2, Math.abs(ey - sy) / 2, 0, 0, Math.PI * 2);
+          ctx.fill();
           ctx.beginPath();
           ctx.ellipse((sx + ex) / 2, (sy + ey) / 2, Math.abs(ex - sx) / 2, Math.abs(ey - sy) / 2, 0, 0, Math.PI * 2);
           ctx.stroke();
@@ -304,6 +496,20 @@ export class CanvasController {
 
     for (const [clientID, cursor] of props.remoteCursors) {
       this.drawCursor(cursor.x, cursor.y, cursor.color, cursor.name);
+    }
+
+    for (const pin of props.commentPins) {
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.arc(pin.x, pin.y, 10 / s, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#1e1b15';
+      ctx.font = `700 ${11 / s}px Inter, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('C', pin.x, pin.y + 0.5 / s);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
     }
 
     ctx.restore();
@@ -370,20 +576,21 @@ export class CanvasController {
   }
 
   private wrapText(text: string, maxWidth: number, fontSize: number): string[] {
-    const words = text.split(' ');
-    const lines = [];
-    let currentLine = words[0];
-    for (let i = 1; i < words.length; i++) {
-      const word = words[i];
-      const width = this.ctx.measureText(currentLine + ' ' + word).width;
-      if (width < maxWidth) {
-        currentLine += ' ' + word;
-      } else {
-        lines.push(currentLine);
-        currentLine = word;
+    const lines: string[] = [];
+    for (const paragraph of text.split('\n')) {
+      const words = paragraph.split(/\s+/);
+      let currentLine = '';
+      for (const word of words) {
+        const candidate = currentLine ? `${currentLine} ${word}` : word;
+        if (currentLine && this.ctx.measureText(candidate).width > maxWidth) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = candidate;
+        }
       }
+      lines.push(currentLine);
     }
-    lines.push(currentLine);
     return lines;
   }
 
@@ -398,5 +605,28 @@ export class CanvasController {
     G = (G<255)?G:255;
     B = (B<255)?B:255;
     return `#${(R.toString(16).length==1?"0"+R.toString(16):R.toString(16))}${(G.toString(16).length==1?"0"+G.toString(16):G.toString(16))}${(B.toString(16).length==1?"0"+B.toString(16):B.toString(16))}`;
+  }
+
+  private withAlpha(color: string, alpha: number): string {
+    const match = /^#([\da-f]{3}|[\da-f]{6})$/i.exec(color);
+    if (!match) return color;
+    const hex = match[1].length === 3
+      ? match[1].split('').map(char => char + char).join('')
+      : match[1];
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  private drawArrowHead(x1: number, y1: number, x2: number, y2: number, size: number) {
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    this.ctx.beginPath();
+    this.ctx.moveTo(x2, y2);
+    this.ctx.lineTo(x2 - size * Math.cos(angle - Math.PI / 6), y2 - size * Math.sin(angle - Math.PI / 6));
+    this.ctx.lineTo(x2 - size * Math.cos(angle + Math.PI / 6), y2 - size * Math.sin(angle + Math.PI / 6));
+    this.ctx.closePath();
+    this.ctx.fillStyle = this.ctx.strokeStyle;
+    this.ctx.fill();
   }
 }

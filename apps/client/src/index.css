@@ -44,6 +44,20 @@ button:not(:disabled):hover {
   filter: brightness(1.15);
 }
 
+:focus-visible {
+  outline: 2px solid #c4b5fd;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -132,4 +146,3 @@ button:not(:disabled):hover {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
-

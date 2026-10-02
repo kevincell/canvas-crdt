@@ -1,4 +1,4 @@
-import { Box, Typography, Avatar, Badge, Divider } from '@mui/material';
+import { Box, Typography, Avatar, Badge, Divider, Button } from '@mui/material';
 import { Wifi, Person } from '@mui/icons-material';
 
 interface StatusPanelProps {
@@ -12,12 +12,17 @@ interface StatusPanelProps {
   localIP: string;
   connectionState: 'disconnected' | 'connecting' | 'connected' | 'syncing' | 'offline';
   queuedOps: number;
+  persistenceState: 'loading' | 'ready' | 'error' | 'migration-error';
+  persistenceError?: string | null;
+  migrationSummary?: string | null;
+  migrationBackupAvailable?: boolean;
+  onDownloadMigrationBackup?: () => void;
 }
 
 export function StatusPanel({
   connected, peerCount, shapeCount, conflictCount,
   historyStep, totalHistorySteps, roomId, localIP,
-  connectionState, queuedOps,
+  connectionState, queuedOps, persistenceState, persistenceError, migrationSummary, migrationBackupAvailable, onDownloadMigrationBackup,
 }: StatusPanelProps) {
   return (
     <Box sx={{
@@ -47,7 +52,7 @@ export function StatusPanel({
           badgeContent={
             <Box sx={{
               width: 8, height: 8, borderRadius: '50%',
-              background: connectionState === 'connected' ? '#6ee7b7'
+          background: connectionState === 'connected' ? '#6ee7b7'
                 : connectionState === 'syncing' ? '#fcd34d'
                 : connectionState === 'connecting' ? '#93c5fd'
                 : connectionState === 'offline' ? '#fdba74'
@@ -67,12 +72,25 @@ export function StatusPanel({
           {connectionState === 'connected' && peerCount === 0 && '✓ Signaling connected — waiting for peers'}
           {connectionState === 'disconnected' && '✗ Disconnected from signaling'}
         </Typography>
+        <Typography aria-live="polite" sx={{ color: persistenceState === 'ready' ? '#6ee7b7' : persistenceState === 'error' ? '#fca5a5' : persistenceState === 'migration-error' ? '#fbbf24' : '#fcd34d', fontSize: 10, whiteSpace: 'nowrap' }}>
+          {persistenceState === 'ready' ? 'Saved on this device' : persistenceState === 'error' ? 'Local save unavailable' : persistenceState === 'migration-error' ? 'Migration paused — data unchanged' : 'Preparing local save…'}
+        </Typography>
         {roomId && (
           <Typography sx={{ color: '#555570', fontSize: 10 }}>
             Room: <span style={{ color: '#a78bfa', fontFamily: 'monospace' }}>{roomId}</span>
           </Typography>
         )}
       </Box>
+      {persistenceState === 'migration-error' && <Typography role="alert" sx={{ maxWidth: 360, p: 1, borderRadius: 1, color: '#fde68a', background: 'rgba(120,53,15,.92)', border: '1px solid rgba(251,191,36,.28)', fontSize: 11 }}>
+        {persistenceError || 'The saved board could not be upgraded. Its data was left unchanged.'}
+      </Typography>}
+      {persistenceState !== 'migration-error' && migrationSummary && <Typography role="status" sx={{ maxWidth: 360, p: 1, borderRadius: 1, color: '#c4b5fd', background: 'rgba(49,46,129,.84)', fontSize: 10 }}>
+        {migrationSummary}
+      </Typography>}
+      {migrationBackupAvailable && <Box role="region" aria-label="Migration recovery copy" sx={{ maxWidth: 360, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1, borderRadius: 1, color: '#fde68a', background: 'rgba(120,53,15,.92)', border: '1px solid rgba(251,191,36,.28)' }}>
+        <Typography sx={{ fontSize: 10 }}>Pre-migration recovery copy saved on this device.</Typography>
+        <Button size="small" onClick={onDownloadMigrationBackup} aria-label="Download pre-migration recovery copy" sx={{ flexShrink: 0, color: '#fff', fontSize: 10 }}>Download</Button>
+      </Box>}
 
       {/* Local IP hint */}
       {localIP && (

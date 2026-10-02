@@ -9,7 +9,9 @@ export default defineConfig({
   plugins: [
     react(),
   ],
-  define: {
+  define: process.env.VITEST ? {
+    global: 'globalThis',
+  } : {
     // Polyfill Node.js globals
     global: 'globalThis',
     'process.env': '{}',

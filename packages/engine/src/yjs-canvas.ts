@@ -49,6 +49,73 @@ const ATTR_UPDATED = 'updatedAt';
 const ATTR_RESOLVED_TS = 'resolved_ts';
 const ATTR_MERGED_TS = 'merged_ts';
 
+export const CURRENT_BOARD_SCHEMA_VERSION = 1;
+
+/**
+ * Upgrade older boards in place using idempotent, additive defaults. This is
+ * intentionally safe to run after both local persistence hydration and the
+ * first remote sync: a peer may contribute a legacy shape after local load.
+ */
+export function migrateBoardDocument(doc: Y.Doc, options: { dryRun?: boolean } = {}): { fromVersion: number; toVersion: number; changedShapes: number; summary: string } {
+  const metadata = doc.getMap<unknown>('boardMeta');
+  const rawVersion = metadata.get('schemaVersion') ?? 0;
+  const storedVersion = Number(rawVersion);
+  if (!Number.isInteger(storedVersion) || storedVersion < 0) {
+    throw new Error('Board migration paused: the saved schema version is invalid. No board data was changed.');
+  }
+  if (storedVersion > CURRENT_BOARD_SCHEMA_VERSION) {
+    throw new Error(`Board migration paused: this board uses newer schema version ${storedVersion}. No board data was changed.`);
+  }
+  const fromVersion = storedVersion;
+  const shapes = doc.getArray<Y.XmlElement>('shapes');
+  const migrationPlan: Array<{ element: Y.XmlElement; serialized: string }> = [];
+  let changedShapes = 0;
+
+  // Validate and prepare every record before opening a Yjs transaction. A bad
+  // record or future shape kind therefore cannot leave a half-migrated board.
+  shapes.forEach((element, index) => {
+    const shapeId = element.getAttribute(ATTR_ID) ?? `at index ${index}`;
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(element.getAttribute(ATTR_DATA) ?? '{}') as Record<string, unknown>;
+    } catch {
+      throw new Error(`Board migration paused: shape ${shapeId} has invalid saved data. No board data was changed.`);
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.kind !== 'string') {
+      throw new Error(`Board migration paused: shape ${shapeId} has an invalid data record. No board data was changed.`);
+    }
+    if (!Object.values(ShapeKind).includes(data.kind as ShapeKind)) {
+      throw new Error(`Board migration paused: shape ${shapeId} uses an unsupported kind. No board data was changed.`);
+    }
+
+    let changed = false;
+    if (typeof data.zIndex !== 'number' || !Number.isFinite(data.zIndex)) { data.zIndex = index; changed = true; }
+    if (data.kind === ShapeKind.Rect || data.kind === ShapeKind.Ellipse) {
+      if (typeof data.fillOpacity !== 'number' || !Number.isFinite(data.fillOpacity)) { data.fillOpacity = 0.13; changed = true; }
+      if (typeof data.strokeWidth !== 'number' || !Number.isFinite(data.strokeWidth)) { data.strokeWidth = 1.5; changed = true; }
+    }
+    if (data.kind === ShapeKind.Rect && (typeof data.cornerRadius !== 'number' || !Number.isFinite(data.cornerRadius))) {
+      data.cornerRadius = 0;
+      changed = true;
+    }
+    if (changed) {
+      migrationPlan.push({ element, serialized: JSON.stringify(data) });
+      changedShapes++;
+    }
+  });
+
+  const summary = changedShapes
+    ? `Upgraded board schema from v${fromVersion} to v${CURRENT_BOARD_SCHEMA_VERSION}; added defaults to ${changedShapes} shape${changedShapes === 1 ? '' : 's'}.`
+    : `Board schema v${CURRENT_BOARD_SCHEMA_VERSION} is current; no shape data needed changes.`;
+  if (!options.dryRun) {
+    doc.transact(() => {
+      for (const item of migrationPlan) item.element.setAttribute(ATTR_DATA, item.serialized);
+      if (fromVersion < CURRENT_BOARD_SCHEMA_VERSION) metadata.set('schemaVersion', CURRENT_BOARD_SCHEMA_VERSION);
+    }, 'board-schema-migration');
+  }
+  return { fromVersion, toVersion: CURRENT_BOARD_SCHEMA_VERSION, changedShapes, summary };
+}
+
 export type EditOp = 'move' | 'resize' | 'update' | 'create' | 'delete';
 
 export interface ActorEdit {
@@ -154,7 +221,9 @@ export function createShapeInCanvas(
   data: Partial<ShapeData>,
   actor: string
 ): string {
-  const shape = createShape(kind, { ...data, kind } as ShapeData, actor, canvas.doc.share ? {} : EMPTY_VECTOR);
+  const currentShapes = yjsShapesToShapes(canvas.shapesArray);
+  const maxLayer = currentShapes.reduce((max, current, index) => Math.max(max, current.data.zIndex ?? index), -1);
+  const shape = createShape(kind, { ...data, kind, zIndex: data.zIndex ?? maxLayer + 1 } as ShapeData, actor, canvas.doc.share ? {} : EMPTY_VECTOR);
   const el = new Y.XmlElement(SHAPE_ELEMENT_TAG);
   const attrs = shapeToYjsAttrs(shape);
   for (const [k, v] of Object.entries(attrs)) {

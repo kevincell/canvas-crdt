@@ -3,14 +3,21 @@ import * as Y from 'yjs';
 import { WebrtcProvider } from 'y-webrtc';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { Awareness } from 'y-protocols/awareness';
+import { CURRENT_BOARD_SCHEMA_VERSION, migrateBoardDocument } from '@crdt-canvas/engine';
+import { deleteMigrationBackup, getMigrationBackup, saveMigrationBackup } from '../../canvas/migrationRecovery';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'syncing' | 'offline';
+export type PersistenceState = 'loading' | 'ready' | 'error' | 'migration-error';
 
 export interface CRDTConnection {
   doc: Y.Doc | null;
   awareness: Awareness | null;
   provider: WebrtcProvider | null;
   connectionState: ConnectionState;
+  persistenceState: PersistenceState;
+  persistenceError: string | null;
+  migrationSummary: string | null;
+  migrationBackupAvailable: boolean;
   connected: boolean;
   peerCount: number;
   roomId: string;
@@ -31,6 +38,10 @@ export function useCRDTConnection(
   const [awarenessState, setAwarenessState] = useState<Awareness | null>(null);
   const [providerState, setProviderState] = useState<WebrtcProvider | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
+  const [persistenceState, setPersistenceState] = useState<PersistenceState>('loading');
+  const [persistenceError, setPersistenceError] = useState<string | null>(null);
+  const [migrationSummary, setMigrationSummary] = useState<string | null>(null);
+  const [migrationBackupAvailable, setMigrationBackupAvailable] = useState(false);
   const [connected, setConnected] = useState(false);
   const [peerCount, setPeerCount] = useState(0);
   const [localIP, setLocalIP] = useState('');
@@ -75,6 +86,7 @@ export function useCRDTConnection(
 
   const initCanvas = useCallback(async () => {
     if (!actorName || !roomId) return;
+    setPersistenceState('loading');
 
     const doc = new Y.Doc();
     docRef.current = doc;
@@ -119,15 +131,78 @@ export function useCRDTConnection(
     providerRef.current = provider;
     setProviderState(provider);
 
+    let migrationTask: Promise<ReturnType<typeof migrateBoardDocument> | null> | null = null;
+    const migrateSafely = () => {
+      if (migrationTask) return migrationTask;
+      migrationTask = (async () => {
+        let backupAvailable = false;
+        try {
+          const preview = migrateBoardDocument(doc, { dryRun: true });
+          const needsBackup = preview.changedShapes > 0 || preview.fromVersion !== CURRENT_BOARD_SCHEMA_VERSION;
+          if (needsBackup) {
+            backupAvailable = Boolean(await getMigrationBackup(roomId));
+            setMigrationBackupAvailable(backupAvailable);
+            if (!backupAvailable) {
+              await saveMigrationBackup(roomId, Y.encodeStateAsUpdate(doc));
+              backupAvailable = true;
+              setMigrationBackupAvailable(true);
+            }
+          }
+          const migration = migrateBoardDocument(doc);
+          setPersistenceError(null);
+          if (migration.changedShapes > 0 || migration.fromVersion !== migration.toVersion) setMigrationSummary(migration.summary);
+          setPersistenceState(previous => previous === 'migration-error' ? 'ready' : previous);
+          if (backupAvailable) {
+            try {
+              await deleteMigrationBackup(roomId);
+              backupAvailable = false;
+              setMigrationBackupAvailable(false);
+            } catch {
+              // Migration succeeded. Keep a downloadable recovery copy if cleanup fails.
+            }
+          }
+          return migration;
+        } catch (error) {
+          if (!backupAvailable) {
+            try {
+              await saveMigrationBackup(roomId, Y.encodeStateAsUpdate(doc));
+              backupAvailable = true;
+              setMigrationBackupAvailable(true);
+            } catch (backupError) {
+              const reason = backupError instanceof Error ? backupError.message : 'Could not save a local recovery copy.';
+              const message = error instanceof Error ? error.message : 'The board schema could not be migrated.';
+              setPersistenceError(`${message} ${reason} The board was left unchanged.`);
+              setPersistenceState('migration-error');
+              return null;
+            }
+          }
+          const message = error instanceof Error ? error.message : 'The board schema could not be migrated.';
+          setPersistenceError(message);
+          setPersistenceState('migration-error');
+          return null;
+        }
+      })().finally(() => { migrationTask = null; });
+      return migrationTask;
+    };
+
     provider.on('synced', (state: any) => {
       const isSynced = typeof state === 'object' ? state?.synced : state;
-      if (isSynced && !offlineModeRef.current) {
-        setTimeout(() => flushQueueRef.current?.(), 100);
+      if (isSynced) {
+        void migrateSafely().then(migration => {
+          if (migration && !offlineModeRef.current) setTimeout(() => flushQueueRef.current?.(), 100);
+        });
       }
     });
 
-    const indexeddb = new IndexeddbPersistence(`crdt-canvas-${roomId}`, doc);
-    indexeddbRef.current = indexeddb;
+    try {
+      const indexeddb = new IndexeddbPersistence(`crdt-canvas-${roomId}`, doc);
+      indexeddbRef.current = indexeddb;
+      indexeddb.whenSynced.then(() => {
+        void migrateSafely().then(migration => { if (migration) setPersistenceState('ready'); });
+      }).catch(() => setPersistenceState('error'));
+    } catch {
+      setPersistenceState('error');
+    }
 
     provider.on('status', (status: any) => {
       const state = typeof status === 'object' ? status?.status : status;
@@ -171,6 +246,10 @@ export function useCRDTConnection(
     awareness: awarenessState,
     provider: providerState,
     connectionState,
+    persistenceState,
+    persistenceError,
+    migrationSummary,
+    migrationBackupAvailable,
     connected,
     peerCount,
     roomId: roomID,

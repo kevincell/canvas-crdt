@@ -1,201 +1,275 @@
 # CRDT Canvas
 
-A real-time collaborative drawing board using Conflict-free Replicated Data Types and WebRTC.
+A local-first, real-time collaborative drawing board powered by Conflict-free Replicated Data Types (CRDTs), peer-to-peer WebRTC synchronization, and semantic conflict detection.
 
-> **Academic Novelty**: Applied semantic conflict resolution for a 2D collaborative canvas — including a novel union-bounding-box merge rule for concurrent resizes and intent ambiguity detection that surfaces semantically dubious merges without requiring consensus.
+> **Academic Novelty**: Applied semantic conflict resolution for a 2D collaborative canvas — including a novel union-bounding-box merge rule for concurrent resizes and intent ambiguity detection that surfaces semantically dubious merges without requiring consensus or an authoritative server.
+
+---
 
 ## Team
 
-- Akshay V Kamath (NNM23CC004)
-- Ramnath S Prabhu (NNM23CC045)
-- Kevin Marshal D Souza (NNM23CC024)
-- Guide: Mr. Krishna Prasad D S
-- Department: Computer and Communication Engineering
+- **Akshay V Kamath** (NNM23CC004)
+- **Ramnath S Prabhu** (NNM23CC045)
+- **Kevin Marshal D Souza** (NNM23CC024)
+- **Guide**: Mr. Krishna Prasad D S
+- **Department**: Computer and Communication Engineering
+
+---
 
 ## Architecture
 
 ```
-┌─────────────┐     WebRTC Data Channel     ┌─────────────┐
-│   Peer A    │ ◄──────────────────────────► │   Peer B    │
-│  (Browser)  │                              │  (Browser)  │
-└──────┬──────┘                              └──────┬──────┘
-       │                                            │
-       │ IndexedDB (offline persistence)            │ IndexedDB
-       │                                            │
-       ▼                                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Yjs CRDT Document                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │ Shapes   │  │ Awareness│  │  History │  │ Conflicts│   │
-│  │ (Y.Array)│  │(Y.Map)   │  │ (local)  │  │ (computed)│   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
-└─────────────────────────────────────────────────────────────┘
-       ▲                                            ▲
-       │ WebSocket (signaling ONLY)                 │ WebSocket
-       └────────────────────────────────────────────┘
-                            │
-                   ┌────────┴────────┐
-                   │  Signaling      │
-                   │  Server (:3001) │
-                   │  (peer discovery│
-                   │   only)         │
-                   └─────────────────┘
+┌─────────────┐     WebRTC Data Channel (Direct P2P)    ┌─────────────┐
+│   Peer A    │ ◄─────────────────────────────────────► │   Peer B    │
+│  (Browser)  │                                         │  (Browser)  │
+└──────┬──────┘                                         └──────┬──────┘
+       │                                                       │
+       │ IndexedDB (offline-first local persistence)           │ IndexedDB
+       │                                                       │
+       ▼                                                       ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                          Yjs CRDT Document                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────┐  │
+│  │    Shapes    │  │  Awareness   │  │   Comments   │  │  Meta   │  │
+│  │ (Y.Array/XML)│  │ (ephemeral)  │  │   (Y.Array)  │  │ (Y.Map) │  │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └─────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+       ▲                                                       ▲
+       │ WebSocket (ephemeral signaling ONLY)                  │ WebSocket
+       └───────────────────────────────────────────────────────┘
+                                   │
+                          ┌────────┴────────┐
+                          │ Signaling Server│
+                          │     (:3001)     │
+                          │ (ICE/SDP relay) │
+                          └─────────────────┘
 ```
 
-**Key design principle**: The server exists solely for WebRTC peer discovery and NAT traversal setup. All canvas data flows directly between browsers via WebRTC data channels. No centralized authoritative server for canvas data.
+**Key Architectural Principles**:
+- **Zero Authoritative Server**: The signaling server exists solely for WebRTC peer discovery, SDP exchange, and NAT traversal. All canvas mutations, awareness states, and comments flow directly between browsers over encrypted WebRTC data channels.
+- **Local-First Persistence**: Canvas state persists in IndexedDB (`y-indexeddb`), allowing full offline authoring. Edits made while offline reconcile automatically upon reconnection.
+- **Client-Side Read-Only Guard**: Shared viewer links enforce mutation suppression at the application and CRDT layer, keeping read-only consumers from polluting the shared document.
 
-## Core Stack
+---
+
+## Technology Stack
 
 | Layer | Technology | Role |
-|-------|-----------|------|
-| Frontend | TypeScript + Vite + React 18 + HTML5 Canvas API | Rendering and user interaction |
-| CRDT | Yjs (with custom semantic hooks) | Conflict-free concurrent editing |
-| P2P Transport | WebRTC data channels (via y-webrtc) | Direct browser-to-browser data sync |
-| Signaling | Node.js + WebSocket (ws) | Peer discovery and NAT traversal setup ONLY |
-| Offline Persistence | IndexedDB (via y-indexeddb) | Local state persistence across sessions |
-| Awareness | y-protocols Awareness | Live cursors and user presence |
-| Testing | Vitest | Unit tests for engine logic |
+|---|---|---|
+| **Frontend** | React 18, TypeScript, HTML5 Canvas API | High-performance 60 FPS 2D rendering, custom gesture physics, accessibility |
+| **Styling** | Emotion / Material UI (MUI), CSS | Sleek glassmorphism dark theme, floating toolbars, responsive overlay layouts |
+| **CRDT Engine** | Yjs, y-protocols Awareness | Conflict-free state synchronization, distributed undo/redo, presence cursors |
+| **P2P Transport** | WebRTC Data Channels (y-webrtc / simple-peer) | Direct browser-to-browser encrypted replication |
+| **Signaling** | Node.js, `ws` (WebSocket) | Ephemeral session discovery and ICE candidate exchange |
+| **Persistence** | IndexedDB (`y-indexeddb`) | Zero-latency local hydration and offline buffer |
+| **Testing** | Vitest, Playwright | Unit tests (engine & client) and end-to-end integration tests |
 
-## Novel Contributions
+---
+
+## Core Capabilities
+
+### 1. Spatial Authoring & Canvas Manipulation
+- **Shape Primitives**: Rectangles, ellipses, straight lines, sticky notes, multiline text, freehand strokes, and raster images.
+- **Connectors & Magnetic Snap**: Line endpoints attach magnetically to object boundaries, compute angle-aware perimeter anchors, and follow target moves/resizes.
+- **Styling Controls**: Shared active palette, hex colour picker, fill opacity, stroke width, and corner radius.
+- **Alignment & Snapping**: Real-time edge/center alignment guides, equal distance gap detection with live distance labels, and one-batch multi-object alignment/distribution.
+- **Deterministic Note Tidy**: Clean column-based auto-layout for brainstorming notes captured in a single undoable transaction.
+
+### 2. Framing & Presentation Mode
+- **Frames**: Named frame containers that group and move contained children.
+- **Nested Frames**: Frames support hierarchical containment and transform propagation.
+- **Text Scale Invariant (L32)**: Frame resizes scale geometric bounds and positions, but preserve text glyph readability and typography without micro-scaling.
+- **Presentation Slideshow**: Cycle through named frames in presentation mode with smooth viewport transitions and keyboard navigation (<kbd>Space</kbd>, <kbd>Arrow</kbd>).
+
+### 3. Facilitation & Collaboration Suite
+- **Guided Retrospectives**: 4 structured stages (*Gather* 💬, *Group* 🗂️, *Vote* 🗳️, *Commit* ✅) with facilitator guidance boxes and participant prompts.
+- **Dot Voting**: Configurable votes-per-person limits, live dot badges on canvas objects, and ranked medal leaderboard.
+- **Shared Timer**: Synchronized countdown timer with visual status chips and audio chimes.
+- **Anchored Comments**: Threaded discussion pins anchored to canvas coordinates with status toggles (*Open* / *Resolved*) and emoji reactions.
+- **Presence & Lasers**: Ephemeral laser pointers with decaying trails, live cursor tags, and co-collaborator avatars.
+
+### 4. Recovery, Migration & Stencils
+- **Schema Migration**: Versioned schema upgrading (v0 → v1) with preflight validation, idempotency, dry-run evaluation, and rollback backups.
+- **Named Checkpoints**: Snapshot and restore board versions as editable copies.
+- **Reusable Stencils**: Save native selections to a local stencil library (up to 50 items, 10 versions each, preview render) with automatic group and connector remapping on insertion.
+- **Curated Starter Templates**: 1-click instantiation for Brainstorming, Sprint Retrospective, Kanban Delivery, and Systems Architecture.
+- **Task Tracker Handoff**: Format sticky notes and frame-grouped tasks to GitHub Issues Markdown, Jira CSV, or Webhook JSON with user data boundary consent.
+
+### 5. Accessibility & Search
+- **Quick Find (<kbd>Ctrl</kbd>+<kbd>F</kbd>)**: Real-time full-text search across notes, text, and frame titles with pulsing beacon zoom navigation.
+- **Keyboard-Only Workflow**: Full canvas navigation using <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> to cycle shapes, <kbd>Arrow</kbd> keys to nudge (1 px / 10 px), and <kbd>Enter</kbd> / <kbd>F2</kbd> for inline text editing.
+- **Assistive Technology**: Screen-reader live regions (`aria-live="polite"`) announcing selection changes, nudges, search matches, and facilitation state.
+
+---
+
+## Novel Academic Contributions
 
 ### 1. Union-Bounding-Box Merge Rule for Concurrent Resizes
+Standard Last-Write-Wins (LWW) CRDT semantics arbitrarily discard one participant's work when two peers resize the same shape concurrently.
 
-**Problem**: Standard LWW (last-write-wins) CRDT semantics discard one user's resize when two users resize the same shape concurrently. The winner is arbitrary and loses information.
+**Our Solution**: When concurrent resize operations are detected on the same shape, the engine computes the **union bounding box** of both edits:
+$$\text{Box}_{\text{merged}} = \text{Box}_A \cup \text{Box}_B = [\min(x_{A1}, x_{B1}), \min(y_{A1}, y_{B1}), \max(x_{A2}, x_{B2}), \max(y_{A2}, y_{B2})]$$
 
-**Solution**: When concurrent resize operations are detected on the same shape, we compute the **union of all bounding boxes** rather than picking one winner. This preserves all contributors' intent in a commutative, associative merge.
+This merge is **commutative**, **associative**, and **idempotent**, ensuring mathematical CRDT convergence while respecting both collaborators' spatial intent without data loss.
 
-```typescript
-// In packages/engine/src/core.ts
-export function mergeShapes(base: Shape, edits: Shape[]): Shape {
-  if (d.kind === ShapeKind.Rect) {
-    const bbox = edits.reduce(
-      (acc, e) => unionBBox(acc, shapeBBox(e)),
-      shapeBBox(base)
-    );
-    // Result encompasses ALL concurrent resizes
-    return { ...base, data: { ...d, x: bbox.minX, y: bbox.minY, w: ..., h: ... } };
-  }
-}
-```
+### 2. Intent Ambiguity Detection (Consensus-Free)
+Standard CRDT systems converge silently, even when two concurrent operations represent conflicting user intent (e.g. Peer A moves a shape to the top-left while Peer B moves it to the bottom-right).
 
-**Why it's novel**: This is a domain-specific merge function with proven UX properties for spatial objects. It's commutative (order doesn't matter) and idempotent (applying the same edit twice has no additional effect) — both required for CRDT correctness.
+**Our Solution**: A deterministic classification function computed independently by all peers:
+$$\text{Displacement} = \|\text{Center}_A - \text{Center}_B\|$$
+$$\text{Ambiguity Ratio} = \frac{\text{Displacement}}{\max(\text{Size}_A, \text{Size}_B)}$$
 
-### 2. Intent Ambiguity Detection (Novel Contribution)
+- $\text{Ratio} < 0.1 \implies \text{None}$
+- $0.1 \le \text{Ratio} < 0.5 \implies \text{Low}$
+- $0.5 \le \text{Ratio} < 1.5 \implies \text{Medium}$
+- $\text{Ratio} \ge 1.5 \implies \text{High}$
 
-**Problem**: CRDT research traditionally treats silent convergence as the goal. But when two users' intents significantly diverge (e.g., moving the same object to opposite sides of the canvas), silent auto-merging is a trust problem — the system converges but the result may not make sense to either user.
+Because the function is pure and evaluated over identical CRDT states, all peers raise identical ambiguity flags **without needing consensus protocols or network rounds**.
 
-**Solution**: We build a system that **detects and surfaces semantically dubious merges**. The detection is a pure function computed independently by all peers — no consensus protocol needed. All peers raise the same flag because they observe the same state.
+### 3. Merge History Playback
+Complete timeline tracking that records creates, updates, deletes, conflicts, and auto-merges, enabling visual scrub-through playback of board evolution.
 
-```typescript
-// Ambiguity is computed purely from geometry, no network needed
-export function classifyAmbiguity(a: Shape, b: Shape): AmbiguityLevel {
-  const displacement = distance(shapeCenter(a), shapeCenter(b));
-  const ratio = displacement / max(size(a), size(b));
-  if (ratio < 0.1) return 'none';
-  if (ratio < 0.5) return 'low';
-  if (ratio < 1.5) return 'medium';
-  return 'high';
-}
-```
+---
 
-**Why it's novel**: Most CRDT systems converge and call it a day. This one asks *"did that convergence make sense?"* and tells the user. The detection is deterministic and identical across all peers without requiring agreement.
-
-### 3. Merge-History Playback
-
-A transparent replay of all merge events — creates, updates, conflicts, and resolutions — allowing users to step through the evolution of the canvas and understand how concurrent edits were resolved.
-
-### 4. Offline-First P2P Synchronization
-
-IndexedDB persistence via `y-indexeddb` ensures that each peer maintains a complete local copy of the canvas. When connections are re-established, Yjs CRDT reconciliation ensures convergence without conflicts.
-
-## Project Structure
+## Monorepo Layout
 
 ```text
 crdt-canvas/
-├── packages/
-│   └── engine/              # Core CRDT engine (shape types, conflict detection, merge rules)
-│       └── src/
-│           ├── core.ts      # Shape types, geometry, ambiguity, merge logic
-│           ├── yjs-canvas.ts # Yjs integration layer
-│           └── index.ts     # Public exports
 ├── apps/
-│   ├── server/              # WebRTC signaling server (discovery ONLY)
-│   │   └── src/index.ts
-│   └── client/              # React + Vite + Canvas frontend
-│       ├── src/
-│       │   ├── App.tsx                 # Main app component
-│       │   ├── features/               # Feature-sliced component domains
-│       │   │   ├── canvas/             # Rendering and toolbar
-│       │   │   ├── crdt/               # Conflict panels and offline simulation
-│       │   │   ├── chat/               # Collaborative chat
-│       │   │   └── demo/               # Side-by-side demo containers
-│       │   ├── views/                  # Page-level components (JoinScreen, etc.)
-│       │   ├── components/             # Reusable UI components
-│       │   └── hooks/
-│       │       └── useCanvasCRDT.ts    # Yjs + WebRTC + IndexedDB orchestration
+│   ├── client/                      # React 18 + Vite client application
+│   │   └── src/
+│   │       ├── features/
+│   │       │   ├── canvas/          # CanvasRenderer, Toolbar, CanvasController, exports
+│   │       │   │   └── __tests__/   # boardDuplication, imageLimits, readOnlyGuard tests
+│   │       │   ├── crdt/            # StatusPanel, Conflict widgets, TimeTravel, MergeLens
+│   │       │   ├── facilitation/    # FacilitationPanel (timer, dot voting, guided retros)
+│   │       │   ├── comments/        # useBoardComments, CommentsPanel
+│   │       │   ├── checkpoints/     # useBoardCheckpoints, CheckpointsPanel
+│   │       │   ├── stencils/        # stencilStore, useStencils, StencilsPanel
+│   │       │   ├── templates/       # curatedTemplates, TemplatesModal
+│   │       │   ├── integrations/    # taskHandoff, TaskTrackerHandoffModal
+│   │       │   │   └── __tests__/   # taskHandoff tests
+│   │       │   ├── sharing/         # ShareBoardModal (editor, viewer, presenter links)
+│   │       │   ├── chat/            # Collaborative P2P text chat
+│   │       │   └── demo/            # Showcase bar, DualPeerContainer
+│   │       ├── hooks/               # useCanvasCRDT (orchestrates Yjs, WebRTC, IndexedDB)
+│   │       └── views/               # SingleCanvasView, JoinScreen
+│   └── server/                      # Lightweight WebRTC signaling relay (discovery only)
+│       └── src/index.ts
+├── packages/
+│   └── engine/                      # Standalone CRDT engine library
+│       └── src/
+│           ├── core.ts              # Shape types, vector clocks, ambiguity, union-bbox
+│           ├── yjs-canvas.ts        # Yjs document binding, schema migration, transactions
+│           └── __tests__/           # 5 test suites (core, history, peer round-trip,
+│                                    # frame transforms, performance budgets)
+├── docs/                            # Specifications, security model, and roadmaps
+│   ├── PRODUCT_ROADMAP.md           # 15-sprint feature specifications
+│   ├── ROADMAP_PROGRESS.md          # Implementation verification tracker
+│   ├── TECHNICAL_DESIGN.md          # Architectural blueprints and CRDT math
+│   ├── INTEGRATION_DISCOVERY.md     # Extension points and export boundary contracts
+│   └── SHARING_AND_ACCESS_CONTROLS.md # Threat model and permission matrix
+├── tests/
+│   └── e2e/                         # Playwright end-to-end integration tests
+├── package.json                     # Monorepo scripts and root dependencies
+├── pnpm-workspace.yaml
+└── tsconfig.base.json
 ```
+
+---
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js >= 20
-- pnpm >= 8
+- **Node.js**: `>= 20.0.0`
+- **pnpm**: `>= 8.0.0`
 
-### Install
+### Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/kevincell/canvas-crdt.git
 cd crdt-canvas
+
+# Install dependencies across all workspaces
 pnpm install
+
+# Build the engine library
+pnpm --filter @crdt-canvas/engine build
 ```
 
-### Run
+### Running Locally
 
 ```bash
-# Terminal 1: Start signaling server
-pnpm run dev:server
-
-# Terminal 2: Start client
-pnpm run dev:client
+# Start both the signaling server (:3001) and Vite dev server (:5173) concurrently
+pnpm run dev
 ```
 
-Open two browser tabs to the same room ID to test collaboration.
+- **Client**: [http://localhost:5173](http://localhost:5173)
+- **Signaling Server**: `ws://localhost:3001`
 
-### Testing
+To test multi-user collaboration:
+1. Open [http://localhost:5173](http://localhost:5173) in Tab A, enter your name, and join a room.
+2. Open the same URL with the same Room ID in Tab B (or an incognito window).
+3. Draw, move objects, or test concurrent resize to observe real-time CRDT synchronization!
+4. Or click **"Dual Tab"** in the top navigation bar to open a split-screen side-by-side simulation within a single tab.
+
+---
+
+## Verification & Testing
+
+The project includes unit, integration, round-trip, and performance suites:
 
 ```bash
-# Run engine tests
-pnpm run test --filter @crdt-canvas/engine
+# Run all unit & integration tests across engine and client (62 tests)
+pnpm test
 
-# Type checking
-pnpm run typecheck
+# Run tests with watch mode
+pnpm --filter @crdt-canvas/engine test:watch
+
+# Run TypeScript typechecks across engine, client, and server
+pnpm typecheck
+
+# Run Playwright end-to-end tests
+pnpm exec playwright test
 ```
 
-## Academic Framing
+### Test Coverage Highlights
+- **Engine Tests** (45 tests):
+  - `core.test.ts`: Vector clocks, bounding box calculations, LWW resolution, deduplication.
+  - `history.test.ts`: Merge history timelines, undo/redo replay, conflict indexing.
+  - `peer_roundtrip.test.ts`: Yjs encoding/decoding round-trips, reconnect recovery, v0 legacy migration idempotency, concurrent move detection.
+  - `frameTransforms.test.ts`: Nested frame transforms, recursive descendant tracking, text-scale invariant verification.
+  - `performanceBudget.test.ts`: 1,000 shapes bounding box (<16 ms), spatial viewport culling (<10 ms), stroke simplification (<5 ms).
+- **Client Tests** (17 tests):
+  - `taskHandoff.test.ts`: Export to GitHub Markdown, Jira CSV, Webhook payload, boundary consent.
+  - `boardDuplication.test.ts`: Safe deep cloning, ID remapping, curated template instantiation.
+  - `imageLimits.test.ts`: 15 MB file limit, 2 MB base64 limit, 25 MB cumulative board quota checks.
+  - `readOnlyGuard.test.ts`: Mutation suppression and document tamper prevention in read-only mode.
 
-### What is Novel
+---
 
-| # | Contribution | Status |
-|---|-------------|--------|
-| 1 | Union-bounding-box semantic merge for concurrent resizes | **Novel** — domain-specific CRDT merge rule |
-| 2 | Intent ambiguity detection (pure function, no consensus) | **Novel** — surfaces semantically dubious merges |
-| 3 | Merge-history playback for transparency | Engineering — known pattern, new application |
-| 4 | Offline-first P2P with IndexedDB + WebRTC | Engineering — proven stack (y-webrtc + y-indexeddb) |
+## Security & Access Control
 
-### What is Established (Not Novel)
+Access control in `@crdt-canvas` is documented in [docs/SHARING_AND_ACCESS_CONTROLS.md](./docs/SHARING_AND_ACCESS_CONTROLS.md) and follows a defense-in-depth model:
+- **Editor (`role=editor`)**: Full read/write access.
+- **Viewer (`role=viewer`)**: Read-only access; drawing, moving, resizing, text editing, and undo/redo APIs are replaced with inert no-ops via `useCanvasCRDT`.
+- **Presenter (`role=viewer&present=true`)**: View-only mode with presentation slideshow interface.
+- **DTLS-SRTP**: WebRTC media and data channels are end-to-end encrypted between peer endpoints.
 
-- Yjs as the CRDT engine (multi-agent system, OT-agnostic)
-- WebRTC data channels for P2P transport
-- WebSocket signaling for peer discovery / NAT traversal
-- IndexedDB for client-side persistence
-- Awareness protocol for cursor/presence tracking
+---
 
-### Research Questions
+## Documentation
 
-1. Does the union-bbox merge rule produce results that users find more satisfactory than LWW for collaborative resizing?
-2. Does ambiguity detection improve trust in CRDT-converged systems?
-3. How does offline-first P2P synchronization perform under network partitions?
+- [Roadmap & Specifications](./docs/PRODUCT_ROADMAP.md)
+- [Delivery Tracker](./docs/ROADMAP_PROGRESS.md)
+- [Technical Design & CRDT Math](./docs/TECHNICAL_DESIGN.md)
+- [Sharing, Threat Model & Permissions](./docs/SHARING_AND_ACCESS_CONTROLS.md)
+- [Integration Discovery & Extension Points](./docs/INTEGRATION_DISCOVERY.md)
+
+---
 
 ## License
 
-MIT
+MIT © 2026 CRDT Canvas Team

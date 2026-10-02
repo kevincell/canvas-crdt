@@ -21,23 +21,39 @@ export enum ShapeKind {
 
 export type Point = { x: number; y: number };
 
-export type StrokeShape = {
+export type ShapeMetadata = {
+  /** Optional shared grouping membership for related board objects. */
+  groupId?: string;
+  /** Optional shared layer order. Shapes without a value keep legacy array order. */
+  zIndex?: number;
+  /** Prevents accidental local manipulation; unlocking remains an explicit action. */
+  locked?: boolean;
+  /** A named rectangle used as a visual board frame. */
+  frameTitle?: string;
+  /** Optional parent frame membership for future frame-aware navigation. */
+  frameId?: string;
+};
+
+export type StrokeShape = ShapeMetadata & {
   kind: ShapeKind.Stroke;
   points: Point[];
   color: string;
   width: number;
 };
 
-export type RectShape = {
+export type RectShape = ShapeMetadata & {
   kind: ShapeKind.Rect;
   x: number;
   y: number;
   w: number;
   h: number;
   color: string;
+  fillOpacity?: number;
+  strokeWidth?: number;
+  cornerRadius?: number;
 };
 
-export type TextShape = {
+export type TextShape = ShapeMetadata & {
   kind: ShapeKind.Text;
   x: number;
   y: number;
@@ -45,16 +61,18 @@ export type TextShape = {
   color: string;
 };
 
-export type EllipseShape = {
+export type EllipseShape = ShapeMetadata & {
   kind: ShapeKind.Ellipse;
   cx: number;
   cy: number;
   rx: number;
   ry: number;
   color: string;
+  fillOpacity?: number;
+  strokeWidth?: number;
 };
 
-export type LineShape = {
+export type LineShape = ShapeMetadata & {
   kind: ShapeKind.Line;
   x1: number;
   y1: number;
@@ -62,9 +80,13 @@ export type LineShape = {
   y2: number;
   color: string;
   width: number;
+  arrowEnd?: boolean;
+  /** Optional live endpoint bindings to rectangular/elliptical board objects. */
+  startShapeId?: string;
+  endShapeId?: string;
 };
 
-export type ImageShape = {
+export type ImageShape = ShapeMetadata & {
   kind: ShapeKind.Image;
   x: number;
   y: number;
@@ -73,7 +95,7 @@ export type ImageShape = {
   src: string;
 };
 
-export type NoteShape = {
+export type NoteShape = ShapeMetadata & {
   kind: ShapeKind.Note;
   x: number;
   y: number;
@@ -85,6 +107,7 @@ export type NoteShape = {
 };
 
 export type ShapeData = StrokeShape | RectShape | EllipseShape | LineShape | TextShape | ImageShape | NoteShape;
+type ShapePayload<T = ShapeData> = T extends ShapeData ? Omit<T, 'kind'> : never;
 
 // ─── Shape (with CRDT metadata) ─────────────────────────────────────────────
 
@@ -107,9 +130,31 @@ export interface Shape {
   updatedAt: number;
 }
 
+/** Return all assigned descendants and their grouped peers for frame transforms. */
+export function frameDescendants(shapes: Shape[], frameId: string): Shape[] {
+  const parentFrameIds = new Set([frameId]);
+  const groupIds = new Set<string>();
+  const members = new Map<string, Shape>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const shape of shapes) {
+      if (shape.deleted || shape.id === frameId || members.has(shape.id)) continue;
+      const parent = shape.data.frameId;
+      const group = shape.data.groupId;
+      if ((!parent || !parentFrameIds.has(parent)) && (!group || !groupIds.has(group))) continue;
+      members.set(shape.id, shape);
+      if (group) groupIds.add(group);
+      if (shape.data.kind === ShapeKind.Rect && shape.data.frameTitle) parentFrameIds.add(shape.id);
+      changed = true;
+    }
+  }
+  return Array.from(members.values());
+}
+
 // ─── Shape Creation ─────────────────────────────────────────────────────────
 
-export function createShape<T extends Omit<ShapeData, 'kind'>>(
+export function createShape<T extends ShapePayload>(
   kind: ShapeKind,
   data: T,
   actor: string,
@@ -162,9 +207,10 @@ export function shapeBBox(s: Shape): { minX: number; minY: number; maxX: number;
     return { minX: Math.min(d.x1, d.x2), minY: Math.min(d.y1, d.y2), maxX: Math.max(d.x1, d.x2), maxY: Math.max(d.y1, d.y2) };
   }
   if (d.kind === ShapeKind.Text) {
-    const estW = d.text.length * 9;
-    const estH = 20;
-    return { minX: d.x, minY: d.y - 14, maxX: d.x + estW, maxY: d.y + estH };
+    const lines = d.text.split('\n');
+    const estW = Math.max(1, ...lines.map(line => line.length)) * 9;
+    const estH = Math.max(1, lines.length) * 20;
+    return { minX: d.x, minY: d.y - 16, maxX: d.x + estW, maxY: d.y - 16 + estH };
   }
   if (d.kind === ShapeKind.Image) {
     return { minX: d.x, minY: d.y, maxX: d.x + d.w, maxY: d.y + d.h };
@@ -173,6 +219,37 @@ export function shapeBBox(s: Shape): { minX: number; minY: number; maxX: number;
     return { minX: d.x, minY: d.y, maxX: d.x + d.w, maxY: d.y + d.h };
   }
   return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+}
+
+export function attachedLineEndpoints(line: LineShape, shapes: Shape[] | ReadonlyMap<string, Shape>): { start: Point; end: Point } {
+  const byId = Array.isArray(shapes)
+    ? new Map(shapes.filter(shape => !shape.deleted).map(shape => [shape.id, shape]))
+    : shapes as ReadonlyMap<string, Shape>;
+  const startTarget = line.startShapeId ? byId.get(line.startShapeId) : undefined;
+  const endTarget = line.endShapeId ? byId.get(line.endShapeId) : undefined;
+  const startCenter = startTarget ? shapeCenter(startTarget) : { x: line.x1, y: line.y1 };
+  const endCenter = endTarget ? shapeCenter(endTarget) : { x: line.x2, y: line.y2 };
+  return {
+    start: startTarget ? boundaryPoint(startTarget, endCenter.x, endCenter.y, line.x1, line.y1) : { x: line.x1, y: line.y1 },
+    end: endTarget ? boundaryPoint(endTarget, startCenter.x, startCenter.y, line.x2, line.y2) : { x: line.x2, y: line.y2 },
+  };
+}
+
+function boundaryPoint(shape: Shape, towardX: number, towardY: number, fallbackX: number, fallbackY: number): Point {
+  const center = shapeCenter(shape);
+  let dx = towardX - center.x, dy = towardY - center.y;
+  if (Math.hypot(dx, dy) < 0.001) { dx = fallbackX - center.x; dy = fallbackY - center.y; }
+  if (Math.hypot(dx, dy) < 0.001) dx = 1;
+  const data = shape.data;
+  if (data.kind === ShapeKind.Ellipse && data.rx > 0 && data.ry > 0) {
+    const t = 1 / Math.sqrt((dx * dx) / (data.rx * data.rx) + (dy * dy) / (data.ry * data.ry));
+    return { x: center.x + dx * t, y: center.y + dy * t };
+  }
+  const bounds = shapeBBox(shape);
+  const halfWidth = Math.max((bounds.maxX - bounds.minX) / 2, 0.001);
+  const halfHeight = Math.max((bounds.maxY - bounds.minY) / 2, 0.001);
+  const t = Math.min(halfWidth / Math.abs(dx || 0.000001), halfHeight / Math.abs(dy || 0.000001));
+  return { x: center.x + dx * t, y: center.y + dy * t };
 }
 
 export function shapeSize(s: Shape): { w: number; h: number } {
@@ -193,6 +270,42 @@ export function unionBBox(
     maxY: Math.max(a.maxY, b.maxY),
   };
 }
+
+/**
+ * Transforms member shape coordinates when its parent frame is resized.
+ *
+ * DESIGN DECISION (L32):
+ * Text glyphs and font sizes do NOT scale when a frame is resized. Frame resize updates
+ * positional coordinates (x, y) so text remains anchored relative to the frame boundary,
+ * while keeping typography crisp, legible, and uniform across devices. Notes scale their
+ * outer bounding box (w, h) while letting internal text re-flow naturally rather than
+ * distorting letterforms.
+ */
+export function scaleFrameMember(
+  data: ShapeData,
+  from: { minX: number; minY: number; maxX: number; maxY: number },
+  to: { minX: number; minY: number; maxX: number; maxY: number }
+): ShapeData {
+  const scaleX = (to.maxX - to.minX) / Math.max(1, from.maxX - from.minX);
+  const scaleY = (to.maxY - to.minY) / Math.max(1, from.maxY - from.minY);
+  const mapX = (x: number) => to.minX + (x - from.minX) * scaleX;
+  const mapY = (y: number) => to.minY + (y - from.minY) * scaleY;
+  if (data.kind === ShapeKind.Rect || data.kind === ShapeKind.Note || data.kind === ShapeKind.Image) {
+    return { ...data, x: mapX(data.x), y: mapY(data.y), w: data.w * scaleX, h: data.h * scaleY };
+  }
+  if (data.kind === ShapeKind.Ellipse) {
+    return { ...data, cx: mapX(data.cx), cy: mapY(data.cy), rx: data.rx * scaleX, ry: data.ry * scaleY };
+  }
+  if (data.kind === ShapeKind.Line) {
+    return { ...data, x1: mapX(data.x1), y1: mapY(data.y1), x2: mapX(data.x2), y2: mapY(data.y2) };
+  }
+  if (data.kind === ShapeKind.Stroke) {
+    return { ...data, points: data.points.map(point => ({ x: mapX(point.x), y: mapY(point.y) })) };
+  }
+  // ShapeKind.Text preserves font size / glyphs; only position scales
+  return { ...data, x: mapX(data.x), y: mapY(data.y) };
+}
+
 
 // ─── Ambiguity Classification (Novel Contribution) ──────────────────────────
 
@@ -367,7 +480,7 @@ export function mergeShapes(base: Shape, edits: Shape[]): Shape {
   };
 }
 
-function dedupPoints(points: Point[], threshold = 0.5): Point[] {
+export function dedupPoints(points: Point[], threshold = 0.5): Point[] {
   if (points.length <= 1) return points;
   const result = [points[0]];
   for (let i = 1; i < points.length; i++) {

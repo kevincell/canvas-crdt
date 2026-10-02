@@ -18,16 +18,6 @@ import {
   type EditOp,
 } from '@crdt-canvas/engine';
 
-type QueuedOp =
-  | { type: 'stroke';  points: { x: number; y: number }[]; color: string; width: number }
-  | { type: 'rect';    x: number; y: number; w: number; h: number; color: string }
-  | { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number; color: string }
-  | { type: 'line';    x1: number; y1: number; x2: number; y2: number; color: string; width: number }
-  | { type: 'text';    x: number; y: number; text: string; color: string }
-  | { type: 'image';   x: number; y: number; w: number; h: number; src: string }
-  | { type: 'note';    x: number; y: number; text: string; color: string; bgColor: string }
-  | { type: 'delete';  shapeId: string };
-
 export interface CRDTOps {
   shapes: Shape[];
   conflicts: Conflict[];
@@ -38,9 +28,9 @@ export interface CRDTOps {
   undo: () => void;
   redo: () => void;
   createStroke: (points: { x: number; y: number }[], color: string, width: number) => string | null;
-  createRect: (x: number, y: number, w: number, h: number, color: string) => string | null;
-  createEllipse: (cx: number, cy: number, rx: number, ry: number, color: string) => string | null;
-  createLine: (x1: number, y1: number, x2: number, y2: number, color: string, width: number) => string | null;
+  createRect: (x: number, y: number, w: number, h: number, color: string, fillOpacity?: number, strokeWidth?: number, cornerRadius?: number) => string | null;
+  createEllipse: (cx: number, cy: number, rx: number, ry: number, color: string, fillOpacity?: number, strokeWidth?: number) => string | null;
+  createLine: (x1: number, y1: number, x2: number, y2: number, color: string, width: number, arrowEnd?: boolean, startShapeId?: string, endShapeId?: string) => string | null;
   createText: (x: number, y: number, text: string, color: string) => string | null;
   createImage: (x: number, y: number, w: number, h: number, src: string) => string | null;
   createNote: (x: number, y: number, text: string, color: string, bgColor: string) => string | null;
@@ -48,6 +38,7 @@ export interface CRDTOps {
   deleteShape: (id: string) => void;
   resolveConflict: (shapeId: string, action: 'merge' | 'keep-local' | 'keep-remote') => void;
   commitShapeHistory: (id: string, prevData: any) => void;
+  commitShapeHistoryBatch: (entries: Array<{ id: string; prevData: any }>) => void;
   sendMessage: (text: string) => void;
   flushQueue: () => void;
 }
@@ -71,9 +62,6 @@ export function useCRDTOps(
   const redoStackRef = useRef<any[]>([]);
   const shapeSnapshotsRef = useRef<Map<string, Shape>>(new Map());
 
-  // Offline queue
-  const pendingOpsRef = useRef<QueuedOp[]>([]);
-
   // ── Engine integration logic ──
 
   useEffect(() => {
@@ -81,6 +69,7 @@ export function useCRDTOps(
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const updateHandler = () => {
+      if (offlineMode) setQueuedOps(count => count + 1);
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         const shapesArray = doc.getArray('shapes');
@@ -111,62 +100,14 @@ export function useCRDTOps(
       doc.off('update', updateHandler);
       if (debounceTimer) clearTimeout(debounceTimer);
     };
-  }, [doc, awareness, actorName]);
+  }, [doc, awareness, actorName, offlineMode]);
 
 
-  // ── Offline Queueing ──
+  // ── Offline sync status ──
 
-  const flushQueue = useCallback(() => {
-    const ops = pendingOpsRef.current;
-    if (ops.length === 0) return;
-    pendingOpsRef.current = [];
-    setQueuedOps(0);
-
-    if (!doc || !awareness) return;
-    const shapesArray = doc.getArray('shapes');
-
-    for (const op of ops) {
-      switch (op.type) {
-        case 'stroke':
-          createShapeInCanvas({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
-            ShapeKind.Stroke, { points: op.points, color: op.color, width: op.width }, actorName);
-          break;
-        case 'rect':
-          createShapeInCanvas({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
-            ShapeKind.Rect, { x: op.x, y: op.y, w: op.w, h: op.h, color: op.color }, actorName);
-          break;
-        case 'ellipse':
-          createShapeInCanvas({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
-            ShapeKind.Ellipse, { cx: op.cx, cy: op.cy, rx: op.rx, ry: op.ry, color: op.color }, actorName);
-          break;
-        case 'line':
-          createShapeInCanvas({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
-            ShapeKind.Line, { x1: op.x1, y1: op.y1, x2: op.x2, y2: op.y2, color: op.color, width: op.width }, actorName);
-          break;
-        case 'text':
-          createShapeInCanvas({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
-            ShapeKind.Text, { x: op.x, y: op.y, text: op.text, color: op.color }, actorName);
-          break;
-        case 'image':
-          createShapeInCanvas({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
-            ShapeKind.Image, { x: op.x, y: op.y, w: op.w, h: op.h, src: op.src }, actorName);
-          break;
-        case 'note':
-          createShapeInCanvas({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
-            ShapeKind.Note, { x: op.x, y: op.y, text: op.text, color: op.color, bgColor: op.bgColor }, actorName);
-          break;
-        case 'delete':
-          deleteShapeInCanvas({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
-            op.shapeId, actorName);
-          break;
-      }
-    }
-  }, [doc, awareness, actorName]);
-
-  const queueOp = useCallback((op: QueuedOp) => {
-    pendingOpsRef.current.push(op);
-    setQueuedOps(pendingOpsRef.current.length);
-  }, []);
+  // Yjs already persists and retains local edits while disconnected. Replaying
+  // duplicate shape commands here would create a second copy on reconnect.
+  const flushQueue = useCallback(() => setQueuedOps(0), []);
 
   // ── Undo helpers ──
 
@@ -175,6 +116,13 @@ export function useCRDTOps(
     redoStackRef.current = [];
     shapeSnapshotsRef.current.set(shapeId, shape);
   }, []);
+
+  const recordCreate = useCallback((shapeId: string, shapesArray: Y.Array<any>) => {
+    if (!doc || !awareness) return;
+    const created = getActiveShapes({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any)
+      .find(shape => shape.id === shapeId);
+    if (created) pushCreateUndo(shapeId, created);
+  }, [doc, awareness, pushCreateUndo]);
 
   const pushDeleteUndo = useCallback((shapeId: string, shape: Shape) => {
     undoStackRef.current.push({ type: 'delete', shapeId, snapshot: shape });
@@ -189,116 +137,81 @@ export function useCRDTOps(
   // ── Shape creations ──
 
   const createStroke = useCallback((points: { x: number; y: number }[], color: string, width: number): string | null => {
-    if (offlineMode) queueOp({ type: 'stroke', points, color, width });
     if (!doc || !awareness) return null;
     const shapesArray = doc.getArray('shapes');
     const id = createShapeInCanvas(
       { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
       ShapeKind.Stroke, { points, color, width }, actorName
     );
-    setTimeout(() => {
-      const all = getActiveShapes({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any);
-      const shape = all.find(s => s.id === id);
-      if (shape) pushCreateUndo(id, shape);
-    }, 60);
+    recordCreate(id, shapesArray);
     return id;
-  }, [doc, awareness, actorName, offlineMode, queueOp, pushCreateUndo]);
+  }, [doc, awareness, actorName, recordCreate]);
 
-  const createRect = useCallback((x: number, y: number, w: number, h: number, color: string): string | null => {
-    if (offlineMode) queueOp({ type: 'rect', x, y, w, h, color });
+  const createRect = useCallback((x: number, y: number, w: number, h: number, color: string, fillOpacity = 0.13, strokeWidth = 1.5, cornerRadius = 0): string | null => {
     if (!doc || !awareness) return null;
     const shapesArray = doc.getArray('shapes');
     const id = createShapeInCanvas(
       { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
-      ShapeKind.Rect, { x, y, w, h, color }, actorName
+      ShapeKind.Rect, { x, y, w, h, color, fillOpacity, strokeWidth, cornerRadius }, actorName
     );
-    setTimeout(() => {
-      const all = getActiveShapes({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any);
-      const shape = all.find(s => s.id === id);
-      if (shape) pushCreateUndo(id, shape);
-    }, 60);
+    recordCreate(id, shapesArray);
     return id;
-  }, [doc, awareness, actorName, offlineMode, queueOp, pushCreateUndo]);
+  }, [doc, awareness, actorName, recordCreate]);
 
-  const createEllipse = useCallback((cx: number, cy: number, rx: number, ry: number, color: string): string | null => {
-    if (offlineMode) queueOp({ type: 'ellipse', cx, cy, rx, ry, color });
+  const createEllipse = useCallback((cx: number, cy: number, rx: number, ry: number, color: string, fillOpacity = 0.13, strokeWidth = 1.5): string | null => {
     if (!doc || !awareness) return null;
     const shapesArray = doc.getArray('shapes');
     const id = createShapeInCanvas(
       { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
-      ShapeKind.Ellipse, { cx, cy, rx, ry, color }, actorName
+      ShapeKind.Ellipse, { cx, cy, rx, ry, color, fillOpacity, strokeWidth }, actorName
     );
-    setTimeout(() => {
-      const all = getActiveShapes({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any);
-      const shape = all.find(s => s.id === id);
-      if (shape) pushCreateUndo(id, shape);
-    }, 60);
+    recordCreate(id, shapesArray);
     return id;
-  }, [doc, awareness, actorName, offlineMode, queueOp, pushCreateUndo]);
+  }, [doc, awareness, actorName, recordCreate]);
 
-  const createLine = useCallback((x1: number, y1: number, x2: number, y2: number, color: string, width: number): string | null => {
-    if (offlineMode) queueOp({ type: 'line', x1, y1, x2, y2, color, width });
+  const createLine = useCallback((x1: number, y1: number, x2: number, y2: number, color: string, width: number, arrowEnd = false, startShapeId?: string, endShapeId?: string): string | null => {
     if (!doc || !awareness) return null;
     const shapesArray = doc.getArray('shapes');
     const id = createShapeInCanvas(
       { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
-      ShapeKind.Line, { x1, y1, x2, y2, color, width }, actorName
+      ShapeKind.Line, { x1, y1, x2, y2, color, width, arrowEnd, startShapeId, endShapeId }, actorName
     );
-    setTimeout(() => {
-      const all = getActiveShapes({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any);
-      const shape = all.find(s => s.id === id);
-      if (shape) pushCreateUndo(id, shape);
-    }, 60);
+    recordCreate(id, shapesArray);
     return id;
-  }, [doc, awareness, actorName, offlineMode, queueOp, pushCreateUndo]);
+  }, [doc, awareness, actorName, recordCreate]);
 
   const createText = useCallback((x: number, y: number, text: string, color: string): string | null => {
-    if (offlineMode) queueOp({ type: 'text', x, y, text, color });
     if (!doc || !awareness) return null;
     const shapesArray = doc.getArray('shapes');
     const id = createShapeInCanvas(
       { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
       ShapeKind.Text, { x, y, text, color }, actorName
     );
-    setTimeout(() => {
-      const all = getActiveShapes({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any);
-      const shape = all.find(s => s.id === id);
-      if (shape) pushCreateUndo(id, shape);
-    }, 60);
+    recordCreate(id, shapesArray);
     return id;
-  }, [doc, awareness, actorName, offlineMode, queueOp, pushCreateUndo]);
+  }, [doc, awareness, actorName, recordCreate]);
 
   const createImage = useCallback((x: number, y: number, w: number, h: number, src: string): string | null => {
-    if (offlineMode) queueOp({ type: 'image', x, y, w, h, src });
     if (!doc || !awareness) return null;
     const shapesArray = doc.getArray('shapes');
     const id = createShapeInCanvas(
       { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
       ShapeKind.Image, { x, y, w, h, src }, actorName
     );
-    setTimeout(() => {
-      const all = getActiveShapes({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any);
-      const shape = all.find(s => s.id === id);
-      if (shape) pushCreateUndo(id, shape);
-    }, 60);
+    recordCreate(id, shapesArray);
     return id;
-  }, [doc, awareness, actorName, offlineMode, queueOp, pushCreateUndo]);
+  }, [doc, awareness, actorName, recordCreate]);
 
   const createNote = useCallback((x: number, y: number, text: string, color: string, bgColor: string): string | null => {
-    if (offlineMode) queueOp({ type: 'note', x, y, text, color, bgColor });
     if (!doc || !awareness) return null;
     const shapesArray = doc.getArray('shapes');
     const id = createShapeInCanvas(
       { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
       ShapeKind.Note, { x, y, w: 160, h: 140, text, color, bgColor }, actorName
     );
-    setTimeout(() => {
-      const all = getActiveShapes({ doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any);
-      const shape = all.find(s => s.id === id);
-      if (shape) pushCreateUndo(id, shape);
-    }, 60);
+    recordCreate(id, shapesArray);
     return id;
-  }, [doc, awareness, actorName, offlineMode, queueOp, pushCreateUndo]);
+  }, [doc, awareness, actorName, recordCreate]);
 
   const updateShape = useCallback((id: string, data: Partial<any>, op: EditOp = 'update', skipHistory = false) => {
     if (!doc || !awareness) return;
@@ -306,7 +219,6 @@ export function useCRDTOps(
     if (shape && !skipHistory) {
       pushUpdateUndo(id, shape.data, { ...shape.data, ...data });
     }
-    if (offlineMode) setQueuedOps(q => q + 1);
     updateShapeInCanvas(
       { doc, shapesArray: doc.getArray('shapes'), awareness, onChange: () => {}, dispose: () => {} } as any,
       id, data, actorName, op
@@ -320,12 +232,11 @@ export function useCRDTOps(
       pushDeleteUndo(id, shape);
       shapeSnapshotsRef.current.delete(id);
     }
-    if (offlineMode) queueOp({ type: 'delete', shapeId: id });
     deleteShapeInCanvas(
       { doc, shapesArray: doc.getArray('shapes'), awareness, onChange: () => {}, dispose: () => {} } as any,
       id, actorName
     );
-  }, [doc, awareness, actorName, shapes, pushDeleteUndo, offlineMode, queueOp]);
+  }, [doc, awareness, actorName, shapes, pushDeleteUndo]);
 
   const commitShapeHistory = useCallback((id: string, prevData: any) => {
     const shape = shapes.find(s => s.id === id);
@@ -333,6 +244,19 @@ export function useCRDTOps(
       pushUpdateUndo(id, prevData, shape.data);
     }
   }, [shapes, pushUpdateUndo]);
+
+  const commitShapeHistoryBatch = useCallback((entries: Array<{ id: string; prevData: any; nextData?: any }>) => {
+    const changes = entries.flatMap(entry => {
+      const shape = shapes.find(item => item.id === entry.id);
+      const nextData = entry.nextData ?? shape?.data;
+      return nextData && JSON.stringify(nextData) !== JSON.stringify(entry.prevData)
+        ? [{ id: entry.id, prevData: entry.prevData, nextData }]
+        : [];
+    });
+    if (!changes.length) return;
+    undoStackRef.current.push({ type: 'batch-update', changes });
+    redoStackRef.current = [];
+  }, [shapes]);
 
   const resolveConflict = useCallback((shapeId: string, action: 'merge' | 'keep-local' | 'keep-remote') => {
     if (!doc || !awareness) return;
@@ -372,6 +296,11 @@ export function useCRDTOps(
         { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
         op.shapeId, op.prevData, actorName
       );
+    } else if (op.type === 'batch-update') {
+      doc.transact(() => op.changes.forEach((change: any) => updateShapeInCanvas(
+        { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
+        change.id, change.prevData, actorName
+      )));
     }
   }, [deleteShape, actorName, doc, awareness]);
 
@@ -396,6 +325,11 @@ export function useCRDTOps(
         { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
         op.shapeId, op.nextData, actorName
       );
+    } else if (op.type === 'batch-update') {
+      doc.transact(() => op.changes.forEach((change: any) => updateShapeInCanvas(
+        { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
+        change.id, change.nextData, actorName
+      )));
     }
   }, [deleteShape, actorName, doc, awareness]);
 
@@ -419,6 +353,7 @@ export function useCRDTOps(
     deleteShape,
     resolveConflict,
     commitShapeHistory,
+    commitShapeHistoryBatch,
     sendMessage,
     flushQueue
   };

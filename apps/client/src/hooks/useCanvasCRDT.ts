@@ -6,7 +6,7 @@ import {
   type MergeHistory,
   type EditOp,
 } from '@crdt-canvas/engine';
-import { useCRDTConnection, type ConnectionState } from '../features/crdt/model/useCRDTConnection';
+import { useCRDTConnection, type ConnectionState, type PersistenceState } from '../features/crdt/model/useCRDTConnection';
 import { useCRDTAwareness } from '../features/crdt/model/useCRDTAwareness';
 import { useCRDTOps } from '../features/crdt/model/useCRDTOps';
 
@@ -22,6 +22,10 @@ export interface CanvasHooks {
   roomId: string;
   localIP: string;
   connectionState: ConnectionState;
+  persistenceState: PersistenceState;
+  persistenceError: string | null;
+  migrationSummary: string | null;
+  migrationBackupAvailable: boolean;
   queuedOps: number;
 
   // Awareness
@@ -37,9 +41,9 @@ export interface CanvasHooks {
 
   // Shape operations
   createStroke: (points: { x: number; y: number }[], color: string, width: number) => string | null;
-  createRect: (x: number, y: number, w: number, h: number, color: string) => string | null;
-  createEllipse: (cx: number, cy: number, rx: number, ry: number, color: string) => string | null;
-  createLine: (x1: number, y1: number, x2: number, y2: number, color: string, width: number) => string | null;
+  createRect: (x: number, y: number, w: number, h: number, color: string, fillOpacity?: number, strokeWidth?: number, cornerRadius?: number) => string | null;
+  createEllipse: (cx: number, cy: number, rx: number, ry: number, color: string, fillOpacity?: number, strokeWidth?: number) => string | null;
+  createLine: (x1: number, y1: number, x2: number, y2: number, color: string, width: number, arrowEnd?: boolean, startShapeId?: string, endShapeId?: string) => string | null;
   createText: (x: number, y: number, text: string, color: string) => string | null;
   createImage: (x: number, y: number, w: number, h: number, src: string) => string | null;
   createNote: (x: number, y: number, text: string, color: string, bgColor: string) => string | null;
@@ -61,12 +65,14 @@ export interface CanvasHooks {
   simulateOnline: () => void;
   triggerReconnect: () => void;
   commitShapeHistory: (id: string, prevData: any) => void;
+  commitShapeHistoryBatch: (entries: Array<{ id: string; prevData: any; nextData?: any }>) => void;
 }
 
 export function useCanvasCRDT(
   actorName: string,
   roomId: string,
-  actorColor: string = '#7c3aed'
+  actorColor: string = '#7c3aed',
+  isReadOnly: boolean = false
 ): CanvasHooks {
   // We need to pass flushQueue to connection so it can be called on reconnect
   // Since we have a circular dependency between useCRDTConnection and useCRDTOps,
@@ -80,6 +86,31 @@ export function useCanvasCRDT(
   useEffect(() => {
     flushQueueRef.current = ops.flushQueue;
   }, [ops.flushQueue]);
+
+  if (isReadOnly) {
+    return {
+      ...conn,
+      ...awareness,
+      ...ops,
+      canUndo: false,
+      canRedo: false,
+      undo: () => {},
+      redo: () => {},
+      createStroke: () => null,
+      createRect: () => null,
+      createEllipse: () => null,
+      createLine: () => null,
+      createText: () => null,
+      createImage: () => null,
+      createNote: () => null,
+      updateShape: () => {},
+      deleteShape: () => {},
+      commitShapeHistory: () => {},
+      commitShapeHistoryBatch: () => {},
+      resolveConflict: () => {},
+      doc: conn.doc,
+    };
+  }
 
   return {
     ...conn,

@@ -1,4 +1,7 @@
 import { useState, useEffect } from 'react';
+import { duplicateBoard, generateRoomId } from '../features/canvas/boardDuplication';
+import { TemplatesModal } from '../features/templates/TemplatesModal';
+import { type ShapeData } from '@crdt-canvas/engine';
 
 export function JoinScreen({
   onJoin,
@@ -10,8 +13,64 @@ export function JoinScreen({
   const [name, setName] = useState('');
   const [roomId, setRoomId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
   const [localIP, setLocalIP] = useState('');
   const [loadingIP, setLoadingIP] = useState(true);
+  const [recentBoards, setRecentBoards] = useState<Array<{ roomId: string; title: string }>>(() => {
+    try { return JSON.parse(localStorage.getItem('crdt-canvas-recent-boards') || '[]').slice(0, 5); }
+    catch { return []; }
+  });
+  const [favoriteRooms, setFavoriteRooms] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('crdt-canvas-favorite-boards') || '[]'); }
+    catch { return []; }
+  });
+  const [boardSearch, setBoardSearch] = useState('');
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const hasSavedBoards = recentBoards.length > 0 || favoriteRooms.length > 0;
+  const savedBoards = [...new Set([...favoriteRooms, ...recentBoards.map(board => board.roomId)])]
+    .map(id => ({ roomId: id, title: localStorage.getItem(`crdt-canvas-title-${id}`) || id, ...readBoardMetadata(id) }))
+    .filter(board => (!favoritesOnly || favoriteRooms.includes(board.roomId))
+      && (!boardSearch.trim() || `${board.title} ${board.roomId} ${board.description} ${board.folder} ${board.tags.join(' ')}`.toLowerCase().includes(boardSearch.trim().toLowerCase())))
+    .sort((a, b) => Number(favoriteRooms.includes(b.roomId)) - Number(favoriteRooms.includes(a.roomId)));
+
+  const toggleFavorite = (id: string) => {
+    const next = favoriteRooms.includes(id) ? favoriteRooms.filter(room => room !== id) : [...favoriteRooms, id];
+    setFavoriteRooms(next);
+    localStorage.setItem('crdt-canvas-favorite-boards', JSON.stringify(next));
+  };
+
+  const joinBoard = (displayName: string, id: string) => {
+    const title = localStorage.getItem(`crdt-canvas-title-${id}`) || id;
+    const next = [{ roomId: id, title }, ...recentBoards.filter(board => board.roomId !== id)].slice(0, 5);
+    setRecentBoards(next);
+    localStorage.setItem('crdt-canvas-recent-boards', JSON.stringify(next));
+    onJoin(displayName, id);
+  };
+
+  const handleDuplicate = async (sourceRoomId: string, sourceTitle: string) => {
+    try {
+      const { newRoomId } = await duplicateBoard({ sourceRoomId, sourceTitle });
+      const activeName = name.trim() || 'Collaborator';
+      joinBoard(activeName, newRoomId);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Could not duplicate this board.');
+    }
+  };
+
+  const handleCreateFromTemplate = (shapes: Array<{ id: string; data: ShapeData }>, title: string) => {
+    const newRoomId = generateRoomId();
+    try {
+      localStorage.setItem(`crdt-canvas-title-${newRoomId}`, title);
+      sessionStorage.setItem(
+        `crdt-canvas-initial-snapshot-${newRoomId}`,
+        JSON.stringify({ title, shapes })
+      );
+    } catch {
+      // ignore
+    }
+    const activeName = name.trim() || 'Collaborator';
+    joinBoard(activeName, newRoomId);
+  };
 
   useEffect(() => {
     fetch('/api/ip')
@@ -35,7 +94,7 @@ export function JoinScreen({
     // Auto-join after setting room ID
     setTimeout(() => {
       if (name.trim() && newRoomId.trim()) {
-        onJoin(name.trim(), newRoomId.trim());
+        joinBoard(name.trim(), newRoomId.trim());
       }
       setIsCreating(false);
     }, 50);
@@ -43,7 +102,7 @@ export function JoinScreen({
 
   const handleJoin = () => {
     if (name.trim() && roomId.trim()) {
-      onJoin(name.trim(), roomId.trim());
+      joinBoard(name.trim(), roomId.trim());
     }
   };
 
@@ -128,24 +187,44 @@ export function JoinScreen({
             <label htmlFor="crdt-room" style={{ display: 'block', fontSize: 10, color: '#8888a8', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>
               Room ID
             </label>
-            <button
-              onClick={handleCreate}
-              disabled={isCreating}
-              style={{
-                fontSize: 10,
-                color: '#a78bfa',
-                background: 'rgba(124,58,237,0.12)',
-                border: '1px solid rgba(124,58,237,0.3)',
-                borderRadius: 6,
-                padding: '2px 8px',
-                cursor: isCreating ? 'not-allowed' : 'pointer',
-                fontFamily: 'Inter, sans-serif',
-                fontWeight: 500,
-                letterSpacing: '0.04em',
-              }}
-            >
-              {isCreating ? '…' : 'Create & Join'}
-            </button>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                type="button"
+                onClick={() => setShowTemplates(true)}
+                style={{
+                  fontSize: 10,
+                  color: '#c4b5fd',
+                  background: 'rgba(124,58,237,0.18)',
+                  border: '1px solid rgba(124,58,237,0.35)',
+                  borderRadius: 6,
+                  padding: '2px 8px',
+                  cursor: 'pointer',
+                  fontFamily: 'Inter, sans-serif',
+                  fontWeight: 600,
+                  letterSpacing: '0.02em',
+                }}
+              >
+                ✦ Templates
+              </button>
+              <button
+                onClick={handleCreate}
+                disabled={isCreating}
+                style={{
+                  fontSize: 10,
+                  color: '#a78bfa',
+                  background: 'rgba(124,58,237,0.12)',
+                  border: '1px solid rgba(124,58,237,0.3)',
+                  borderRadius: 6,
+                  padding: '2px 8px',
+                  cursor: isCreating ? 'not-allowed' : 'pointer',
+                  fontFamily: 'Inter, sans-serif',
+                  fontWeight: 500,
+                  letterSpacing: '0.04em',
+                }}
+              >
+                {isCreating ? '…' : 'Create & Join'}
+              </button>
+            </div>
           </div>
           <input
             id="crdt-room"
@@ -170,6 +249,28 @@ export function JoinScreen({
             onKeyDown={e => e.key === 'Enter' && handleJoin()}
           />
         </div>
+
+        {hasSavedBoards && <div style={{ marginTop: -12, marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <div style={{ fontSize: 10, color: '#8888a8', textTransform: 'uppercase', letterSpacing: '.08em' }}>Your boards</div>
+            <button type="button" onClick={() => setFavoritesOnly(value => !value)} aria-pressed={favoritesOnly} style={{ color: favoritesOnly ? '#fbbf24' : '#8888a8', background: 'transparent', border: 0, fontSize: 10, cursor: 'pointer' }}>★ Favorites</button>
+          </div>
+          <input type="search" aria-label="Search recent and favorite boards" placeholder="Search boards…" value={boardSearch} onChange={event => setBoardSearch(event.target.value)} style={{ width: '100%', boxSizing: 'border-box', marginBottom: 6, padding: '7px 9px', borderRadius: 6, color: '#d4d4e1', background: 'rgba(15,15,20,.55)', border: '1px solid rgba(255,255,255,.09)', fontSize: 11 }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {savedBoards.map(board => <div key={board.roomId} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <button type="button" onClick={() => { setRoomId(board.roomId); if (name.trim()) joinBoard(name.trim(), board.roomId); }} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flex: 1, minWidth: 0, padding: '7px 9px', textAlign: 'left', borderRadius: 6, background: 'rgba(255,255,255,.04)', color: '#d4d4e1', border: '1px solid rgba(255,255,255,.07)', fontSize: 11, cursor: 'pointer' }}>
+                <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 2 }}>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{board.title}</span>
+                  {(board.folder || board.tags.length > 0) && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#8888a8', fontSize: 9 }}>{[board.folder, ...board.tags].filter(Boolean).join(' · ')}</span>}
+                </span>
+                <span style={{ flexShrink: 0, color: '#8888a8', fontFamily: 'monospace' }}>{board.roomId}</span>
+              </button>
+              <button type="button" onClick={() => void handleDuplicate(board.roomId, board.title)} title="Duplicate board as a new independent copy" aria-label={`Duplicate ${board.title}`} style={{ width: 28, height: 28, color: '#a78bfa', background: 'transparent', border: 0, cursor: 'pointer', fontSize: 13 }}>⧉</button>
+              <button type="button" onClick={() => toggleFavorite(board.roomId)} aria-label={favoriteRooms.includes(board.roomId) ? `Remove ${board.title} from favorites` : `Add ${board.title} to favorites`} aria-pressed={favoriteRooms.includes(board.roomId)} style={{ width: 28, height: 28, color: favoriteRooms.includes(board.roomId) ? '#fbbf24' : '#64647a', background: 'transparent', border: 0, cursor: 'pointer' }}>★</button>
+            </div>)}
+            {savedBoards.length === 0 && <div style={{ color: '#8888a8', fontSize: 11, padding: '6px 2px' }}>No matching boards.</div>}
+          </div>
+        </div>}
 
         {/* Join button */}
         <button
@@ -285,6 +386,26 @@ export function JoinScreen({
           <div>• Works offline — edits queue and sync on reconnect</div>
         </div>
       </div>
+
+      <TemplatesModal
+        open={showTemplates}
+        onClose={() => setShowTemplates(false)}
+        onCreateNewBoard={handleCreateFromTemplate}
+        isCanvasEmpty={true}
+      />
     </div>
   );
+}
+
+function readBoardMetadata(roomId: string): { description: string; folder: string; tags: string[] } {
+  try {
+    const value = JSON.parse(localStorage.getItem(`crdt-canvas-meta-${roomId}`) || '{}');
+    return {
+      description: typeof value.description === 'string' ? value.description : '',
+      folder: typeof value.folder === 'string' ? value.folder : '',
+      tags: Array.isArray(value.tags) ? value.tags.filter((tag: unknown): tag is string => typeof tag === 'string') : [],
+    };
+  } catch {
+    return { description: '', folder: '', tags: [] };
+  }
 }
