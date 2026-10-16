@@ -83,7 +83,7 @@ export function TemplatesModal({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        bgcolor: 'rgba(5, 5, 10, 0.82)',
+        bgcolor: 'var(--panel-solid)',
         backdropFilter: 'blur(8px)',
         p: 2,
       }}
@@ -97,28 +97,28 @@ export function TemplatesModal({
           maxHeight: '90vh',
           display: 'flex',
           flexDirection: 'column',
-          bgcolor: 'rgba(20, 20, 32, 0.98)',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
+          bgcolor: 'var(--panel-solid)',
+          border: '1px solid var(--border)',
           borderRadius: 3,
-          boxShadow: '0 24px 72px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05)',
+          boxShadow: '0 24px 72px rgba(0,0,0,0.35), 0 0 0 1px var(--surface)',
           overflow: 'hidden',
-          color: '#e2e2f0',
+          color: 'var(--text)',
         }}
       >
         {/* Header */}
         <Box sx={{ p: 2.5, pb: 1.75, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <AutoAwesomeIcon sx={{ color: '#a78bfa', fontSize: 22 }} />
-              <Typography sx={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', color: '#f3e8ff' }}>
+              <AutoAwesomeIcon sx={{ color: 'var(--accent)', fontSize: 22 }} />
+              <Typography sx={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', color: 'var(--text)' }}>
                 Curated Board Templates
               </Typography>
             </Box>
-            <Typography sx={{ color: '#94a3b8', fontSize: 12, mt: 0.5 }}>
+            <Typography sx={{ color: 'var(--text-muted)', fontSize: 12, mt: 0.5 }}>
               Production-tested visual structures. Preview layout, select versions, and insert editable native components or spawn a new board.
             </Typography>
           </Box>
-          <IconButton onClick={onClose} aria-label="Close templates dialog" sx={{ color: '#94a3b8', '&:hover': { color: '#fff' } }}>
+          <IconButton onClick={onClose} aria-label="Close templates dialog" sx={{ color: 'var(--text-muted)', '&:hover': { color: '#fff' } }}>
             <CloseIcon fontSize="small" />
           </IconButton>
         </Box>
@@ -132,27 +132,27 @@ export function TemplatesModal({
               clickable
               onClick={() => setSelectedCategory(cat)}
               sx={{
-                bgcolor: selectedCategory === cat ? 'rgba(124, 58, 237, 0.35)' : 'rgba(255, 255, 255, 0.04)',
-                color: selectedCategory === cat ? '#c4b5fd' : '#8888a8',
-                borderColor: selectedCategory === cat ? 'rgba(167, 139, 250, 0.5)' : 'rgba(255, 255, 255, 0.08)',
+                bgcolor: selectedCategory === cat ? 'var(--accent-soft)' : 'var(--surface)',
+                color: selectedCategory === cat ? 'var(--accent)' : 'var(--text-muted)',
+                borderColor: selectedCategory === cat ? 'var(--accent)' : 'var(--border)',
                 borderWidth: 1,
                 borderStyle: 'solid',
                 fontSize: 11,
                 fontWeight: 600,
                 textTransform: 'capitalize',
                 '&:hover': {
-                  bgcolor: 'rgba(124, 58, 237, 0.22)',
-                  color: '#e2e2f0',
+                  bgcolor: 'var(--accent-soft)',
+                  color: 'var(--text)',
                 },
               }}
             />
           ))}
         </Box>
 
-        <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.08)' }} />
+        <Divider sx={{ borderColor: 'var(--border)' }} />
 
         {/* Template Grid */}
-        <Box sx={{ flex: 1, overflowY: 'auto', p: 2.5, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 2 }}>
+        <Box sx={{ flex: 1, overflowY: 'auto', p: 2.5, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(420px, 100%), 1fr))', gap: 2 }}>
           {filteredTemplates.map(template => {
             const currentVersionNum = selectedVersions[template.id] ?? template.versions[template.versions.length - 1].version;
             const currentVersion = template.versions.find(v => v.version === currentVersionNum) ?? template.versions[template.versions.length - 1];
@@ -196,21 +196,21 @@ function TemplateCard({
       sx={{
         p: 2,
         borderRadius: 2,
-        bgcolor: 'rgba(255, 255, 255, 0.025)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
+        bgcolor: 'var(--surface)',
+        border: '1px solid var(--border)',
         display: 'flex',
         flexDirection: 'column',
         gap: 1.5,
         transition: 'all 0.2s ease',
         '&:hover': {
-          bgcolor: 'rgba(255, 255, 255, 0.04)',
-          borderColor: 'rgba(167, 139, 250, 0.3)',
+          bgcolor: 'var(--surface)',
+          borderColor: 'var(--accent-soft)',
         },
       }}
     >
       {/* Title & Category Badge */}
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
-        <Typography sx={{ fontSize: 14, fontWeight: 700, color: '#f3e8ff' }}>
+        <Typography sx={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
           {template.title}
         </Typography>
         <Chip
@@ -221,27 +221,27 @@ function TemplateCard({
             fontSize: 10,
             textTransform: 'uppercase',
             letterSpacing: '0.04em',
-            bgcolor: 'rgba(124, 58, 237, 0.15)',
-            color: '#a78bfa',
-            border: '1px solid rgba(124, 58, 237, 0.3)',
+            bgcolor: 'var(--accent-soft)',
+            color: 'var(--accent)',
+            border: '1px solid var(--accent-soft)',
           }}
         />
       </Box>
 
       {/* Description */}
-      <Typography sx={{ color: '#94a3b8', fontSize: 11, lineHeight: 1.5, minHeight: 32 }}>
+      <Typography sx={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.5, minHeight: 32 }}>
         {template.description}
       </Typography>
 
       {/* Visual SVG Layout Preview */}
-      <Box sx={{ width: '100%', height: 140, borderRadius: 1.5, overflow: 'hidden', border: '1px solid rgba(255, 255, 255, 0.06)' }}>
+      <Box sx={{ width: '100%', height: 140, borderRadius: 1.5, overflow: 'hidden', border: '1px solid var(--surface)' }}>
         <TemplatePreview name={template.title} shapes={currentVersion.shapes} />
       </Box>
 
       {/* Version Selector & Changelog */}
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap', minWidth: 0 }}>
         <FormControl size="small" sx={{ minWidth: 150 }}>
-          <InputLabel id={versionSelectId} sx={{ fontSize: 10, color: '#a78bfa' }}>Version</InputLabel>
+          <InputLabel id={versionSelectId} sx={{ fontSize: 10, color: 'var(--accent)' }}>Version</InputLabel>
           <Select
             labelId={versionSelectId}
             value={currentVersion.version}
@@ -250,10 +250,10 @@ function TemplateCard({
             sx={{
               height: 28,
               fontSize: 10,
-              color: '#ddd6fe',
-              bgcolor: 'rgba(15, 15, 24, 0.6)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              '& .MuiSelect-icon': { color: '#a78bfa', fontSize: 16 },
+              color: 'var(--text)',
+              bgcolor: 'var(--panel-solid)',
+              border: '1px solid var(--border)',
+              '& .MuiSelect-icon': { color: 'var(--accent)', fontSize: 16 },
             }}
           >
             {template.versions.map(v => (
@@ -264,7 +264,7 @@ function TemplateCard({
           </Select>
         </FormControl>
 
-        <Typography sx={{ fontSize: 9, color: '#71717a', textAlign: 'right', flex: 1 }} noWrap title={currentVersion.changelog}>
+        <Typography sx={{ fontSize: 9, color: 'var(--text-muted)', textAlign: 'right', flex: 1 }} noWrap title={currentVersion.changelog}>
           {currentVersion.changelog}
         </Typography>
       </Box>
@@ -280,8 +280,8 @@ function TemplateCard({
             fontSize: 11,
             fontWeight: 700,
             textTransform: 'none',
-            background: 'linear-gradient(135deg, rgba(124,58,237,0.85) 0%, rgba(59,130,246,0.7) 100%)',
-            boxShadow: '0 2px 10px rgba(124, 58, 237, 0.25)',
+            background: 'linear-gradient(135deg, var(--accent) 0%, rgba(59,130,246,0.7) 100%)',
+            boxShadow: '0 2px 10px var(--accent-soft)',
           }}
         >
           {isCanvasEmpty ? 'Use on canvas' : 'Insert into board'}
@@ -295,11 +295,11 @@ function TemplateCard({
             fontSize: 11,
             fontWeight: 600,
             textTransform: 'none',
-            borderColor: 'rgba(255, 255, 255, 0.16)',
-            color: '#c4b5fd',
+            borderColor: 'var(--border)',
+            color: 'var(--accent)',
             '&:hover': {
-              borderColor: '#a78bfa',
-              bgcolor: 'rgba(124, 58, 237, 0.12)',
+              borderColor: 'var(--accent)',
+              bgcolor: 'var(--accent-soft)',
             },
           }}
         >
@@ -327,10 +327,10 @@ function TemplatePreview({ name, shapes }: { name: string; shapes: Array<{ id: s
       role="img"
       aria-label={`Preview of ${name} template layout`}
       viewBox="0 0 190 120"
-      style={{ width: '100%', height: '100%', background: 'rgba(8, 8, 14, 0.95)' }}
+      style={{ width: '100%', height: '100%', background: 'var(--panel-solid)' }}
     >
       {boxes.map(({ id, data, box }) => {
-        const color = 'color' in data ? data.color : '#a78bfa';
+        const color = 'color' in data ? data.color : 'var(--accent)';
         const x = px(box.minX);
         const y = py(box.minY);
         const width = Math.max(1, (box.maxX - box.minX) * scale);
@@ -408,7 +408,7 @@ function TemplatePreview({ name, shapes }: { name: string; shapes: Array<{ id: s
               width={width}
               height={height}
               rx={data.kind === ShapeKind.Rect ? data.cornerRadius ?? 1 : 1}
-              fill={data.kind === ShapeKind.Rect ? color : '#475569'}
+              fill={data.kind === ShapeKind.Rect ? color : 'var(--text-muted)'}
               fillOpacity={data.kind === ShapeKind.Rect ? (isFrame ? 0.04 : data.fillOpacity ?? 0.16) : 1}
               stroke={color}
               strokeWidth={isFrame ? '1.2' : '0.8'}

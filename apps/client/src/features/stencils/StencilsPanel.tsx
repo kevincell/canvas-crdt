@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Box, Button, Divider, Typography } from '@mui/material';
 import { ShapeKind, shapeBBox, type Shape, type ShapeData } from '@crdt-canvas/engine';
 import { type Stencil, type StencilVersion } from './stencilStore';
+import { IconButton } from '../../ui/primitives';
 
 interface StencilsPanelProps {
   stencils: Stencil[];
@@ -37,45 +38,45 @@ export function StencilsPanel({ stencils, selectedShapes, loading, error, onSave
     finally { setBusy(false); }
   };
 
-  return <Box role="region" aria-label="Reusable stencil library" sx={{ height: '100%', display: 'flex', flexDirection: 'column', color: '#e2e2f0', background: 'rgba(15,15,22,.98)' }}>
+  return <Box role="region" aria-label="Reusable stencil library" sx={{ height: '100%', display: 'flex', flexDirection: 'column', color: 'var(--text)', background: 'var(--panel-solid)' }}>
     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1.5, py: 1.25 }}>
       <Box>
         <Typography sx={{ fontSize: 13, fontWeight: 700 }}>Reusable stencils</Typography>
-        <Typography sx={{ mt: 0.25, color: '#85859b', fontSize: 9 }}>
+        <Typography sx={{ mt: 0.25, color: 'var(--text-muted)', fontSize: 9 }}>
           Saved on this device · {stencils.length}/50 items · up to 10 versions each
         </Typography>
       </Box>
-      <Button size="small" onClick={onClose} aria-label="Close stencils panel">Close</Button>
+      <IconButton icon="x" label="Close stencils panel" size="sm" onClick={onClose} />
     </Box>
-    <Divider sx={{ borderColor: 'rgba(255,255,255,.08)' }} />
+    <Divider sx={{ borderColor: 'var(--border)' }} />
     <Box sx={{ p: 1.5, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
-      <Typography sx={{ color: '#c4b5fd', fontSize: 10, fontWeight: 700 }}>Save current selection · {selectedShapes.length} object{selectedShapes.length === 1 ? '' : 's'}</Typography>
-      <input aria-label="Stencil name" maxLength={60} value={name} onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void save(); }} placeholder="e.g. Decision flow" style={{ boxSizing: 'border-box', width: '100%', padding: 8, borderRadius: 6, color: '#e2e2f0', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', fontSize: 11 }} />
+      <Typography sx={{ color: 'var(--accent)', fontSize: 10, fontWeight: 700 }}>Save current selection · {selectedShapes.length} object{selectedShapes.length === 1 ? '' : 's'}</Typography>
+      <input aria-label="Stencil name" maxLength={60} value={name} onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void save(); }} placeholder="e.g. Decision flow" style={{ boxSizing: 'border-box', width: '100%', padding: 8, borderRadius: 6, color: 'var(--text)', background: 'var(--surface)', border: '1px solid var(--border)', fontSize: 11 }} />
       <Button variant="contained" size="small" disabled={!name.trim() || !selectedShapes.length || busy || (!stencils.some(s => s.name.toLowerCase() === name.trim().toLowerCase()) && stencils.length >= 50)} onClick={() => void save()}>
         {stencils.some(stencil => stencil.name.toLowerCase() === name.trim().toLowerCase()) ? 'Save new version' : 'Save stencil'}
       </Button>
-      <Typography sx={{ color: '#73738a', fontSize: 9 }}>
+      <Typography sx={{ color: 'var(--text-muted)', fontSize: 9 }}>
         {stencils.length >= 50
           ? 'Capacity limit reached (50 stencils). Delete unused items before creating a new stencil name.'
           : 'Saving a stencil with an existing name adds a version. Each version is limited to 4 MB.'}
       </Typography>
     </Box>
-    <Divider sx={{ borderColor: 'rgba(255,255,255,.08)' }} />
+    <Divider sx={{ borderColor: 'var(--border)' }} />
     {(error || localError) && <Typography role="alert" sx={{ px: 1.5, py: 1, color: '#fca5a5', fontSize: 10 }}>{localError || error}</Typography>}
     <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 1.25, display: 'flex', flexDirection: 'column', gap: 1 }}>
-      {loading && <Typography sx={{ color: '#85859b', fontSize: 10 }}>Loading stencils…</Typography>}
-      {!loading && !stencils.length && <Typography sx={{ py: 3, textAlign: 'center', color: '#85859b', fontSize: 11 }}>No saved stencils yet. Select objects and save them here for reuse.</Typography>}
+      {loading && <Typography sx={{ color: 'var(--text-muted)', fontSize: 10 }}>Loading stencils…</Typography>}
+      {!loading && !stencils.length && <Typography sx={{ py: 3, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>No saved stencils yet. Select objects and save them here for reuse.</Typography>}
       {stencils.map(stencil => {
         const latest = stencil.versions.at(-1);
         if (!latest) return null;
-        return <Box key={stencil.id} sx={{ p: 1, border: '1px solid rgba(255,255,255,.08)', borderRadius: 1.5, background: 'rgba(255,255,255,.025)' }}>
+        return <Box key={stencil.id} sx={{ p: 1, border: '1px solid var(--border)', borderRadius: 1.5, background: 'var(--surface)' }}>
           <StencilPreview name={stencil.name} shapes={latest.shapes} />
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 0.5, mt: 0.75 }}>
-            <Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontSize: 11, fontWeight: 700 }}>{stencil.name}</Typography><Typography sx={{ color: '#85859b', fontSize: 9 }}>v{latest.version} · {latest.shapes.length} objects</Typography></Box>
+            <Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontSize: 11, fontWeight: 700 }}>{stencil.name}</Typography><Typography sx={{ color: 'var(--text-muted)', fontSize: 9 }}>v{latest.version} · {latest.shapes.length} objects</Typography></Box>
             <Button size="small" variant="contained" onClick={() => onInsert(stencil, latest)} aria-label={`Insert ${stencil.name} version ${latest.version}`}>Insert</Button>
           </Box>
           <details style={{ marginTop: 5 }}>
-            <summary style={{ cursor: 'pointer', color: '#9292a9', fontSize: 9 }}>Version history ({stencil.versions.length})</summary>
+            <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 9 }}>Version history ({stencil.versions.length})</summary>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.75 }}>
               {stencil.versions.slice(0, -1).reverse().map(version => <Button key={version.version} size="small" variant="outlined" onClick={() => onInsert(stencil, version)} sx={{ minWidth: 0, px: 0.75, fontSize: 9 }}>Insert v{version.version}</Button>)}
               <Button size="small" color="error" onClick={() => void remove(stencil)} sx={{ minWidth: 0, px: 0.75, fontSize: 9 }}>Delete library item</Button>
@@ -96,16 +97,16 @@ function StencilPreview({ name, shapes }: { name: string; shapes: Array<{ id: st
   const scale = Math.min(86 / Math.max(1, maxX - minX), 46 / Math.max(1, maxY - minY));
   const px = (x: number) => 7 + (x - minX) * scale;
   const py = (y: number) => 7 + (y - minY) * scale;
-  return <svg role="img" aria-label={`Preview of ${name}`} viewBox="0 0 100 60" style={{ width: '100%', height: 60, borderRadius: 6, background: 'rgba(3,7,18,.8)' }}>
+  return <svg role="img" aria-label={`Preview of ${name}`} viewBox="0 0 100 60" style={{ width: '100%', height: 60, borderRadius: 6, background: 'var(--panel-solid)' }}>
     {boxes.map(({ id, data, box }) => {
-      const color = 'color' in data ? data.color : '#a78bfa';
+      const color = 'color' in data ? data.color : 'var(--accent)';
       const x = px(box.minX), y = py(box.minY), width = Math.max(1, (box.maxX - box.minX) * scale), height = Math.max(1, (box.maxY - box.minY) * scale);
       if (data.kind === ShapeKind.Line) return <line key={id} x1={px(data.x1)} y1={py(data.y1)} x2={px(data.x2)} y2={py(data.y2)} stroke={color} strokeWidth="1.5" />;
       if (data.kind === ShapeKind.Stroke) return <polyline key={id} points={data.points.map(point => `${px(point.x)},${py(point.y)}`).join(' ')} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" />;
       if (data.kind === ShapeKind.Ellipse) return <ellipse key={id} cx={px(data.cx)} cy={py(data.cy)} rx={Math.max(1, data.rx * scale)} ry={Math.max(1, data.ry * scale)} fill={color} fillOpacity={data.fillOpacity ?? 0.2} stroke={color} strokeWidth="1" />;
       if (data.kind === ShapeKind.Note) return <g key={id}><rect x={x} y={y} width={width} height={height} rx="2" fill={data.bgColor} /><text x={x + 2} y={y + 8} fill={data.color} fontSize="5">{data.text.slice(0, 18)}</text></g>;
       if (data.kind === ShapeKind.Text) return <text key={id} x={x} y={y + 7} fill={color} fontSize="7">{data.text.slice(0, 20)}</text>;
-      return <rect key={id} x={x} y={y} width={width} height={height} rx={data.kind === ShapeKind.Rect ? data.cornerRadius ?? 1 : 1} fill={data.kind === ShapeKind.Rect ? color : '#475569'} fillOpacity={data.kind === ShapeKind.Rect ? data.fillOpacity ?? 0.16 : 1} stroke={color} strokeWidth="1" />;
+      return <rect key={id} x={x} y={y} width={width} height={height} rx={data.kind === ShapeKind.Rect ? data.cornerRadius ?? 1 : 1} fill={data.kind === ShapeKind.Rect ? color : 'var(--text-muted)'} fillOpacity={data.kind === ShapeKind.Rect ? data.fillOpacity ?? 0.16 : 1} stroke={color} strokeWidth="1" />;
     })}
   </svg>;
 }

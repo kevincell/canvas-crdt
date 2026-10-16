@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as Y from 'yjs';
+import { IconButton } from '../../ui/primitives';
 
 export interface ChatMessage {
   id: string;
@@ -21,7 +22,7 @@ interface ChatPanelProps {
 }
 
 const NOTE_COLORS = [
-  '#fef3c7', '#fce7f3', '#dbeafe', '#d1fae5', '#fee2e2', '#f3e8ff',
+  '#fef3c7', '#fce7f3', '#dbeafe', '#d1fae5', '#fee2e2', 'var(--text)',
 ];
 
 export function ChatPanel({ doc, actorName, actorColor, onClose }: ChatPanelProps) {
@@ -119,39 +120,35 @@ export function ChatPanel({ doc, actorName, actorColor, onClose }: ChatPanelProp
       display: 'flex',
       flexDirection: 'column',
       height: '100%',
-      background: 'rgba(15, 15, 22, 0.97)',
-      borderLeft: '1px solid rgba(255,255,255,0.06)',
+      background: 'var(--panel-solid)',
+      borderLeft: '1px solid var(--surface)',
     }}>
       {/* Header */}
       <div style={{
         padding: '12px 16px',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        borderBottom: '1px solid var(--surface)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 16 }}>💬</span>
-          <span style={{ fontWeight: 600, fontSize: 14, color: '#e2e2f0' }}>Chat</span>
+          <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>Chat</span>
           <span style={{
             fontSize: 10, padding: '1px 6px', borderRadius: 10,
-            background: 'rgba(16, 185, 129, 0.2)', color: '#6ee7b7',
+            background: 'var(--success-soft)', color: 'var(--success)',
           }}>
             {messages.length} msgs
           </span>
         </div>
-        <button onClick={onClose} style={{
-          color: '#8888a8', fontSize: 18, lineHeight: 1,
-          width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          borderRadius: 4,
-        }}>✕</button>
+        <IconButton icon="x" label="Close chat" size="sm" onClick={onClose} />
       </div>
 
       {/* Messages */}
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {messages.length === 0 && (
           <div style={{
-            textAlign: 'center', color: '#555570', fontSize: 12,
+            textAlign: 'center', color: 'var(--text-faint)', fontSize: 12,
             padding: '32px 0',
           }}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>💭</div>
@@ -174,17 +171,17 @@ export function ChatPanel({ doc, actorName, actorColor, onClose }: ChatPanelProp
               }}>
                 <span style={{
                   width: 8, height: 8, borderRadius: '50%',
-                  background: isMe ? actorColor : '#7c3aed',
+                  background: isMe ? actorColor : 'var(--accent)',
                   flexShrink: 0,
                 }} />
                 <span style={{
                   fontSize: 11,
-                  color: isMe ? actorColor : '#a78bfa',
+                  color: isMe ? actorColor : 'var(--accent)',
                   fontWeight: 600,
                 }}>
                   {msg.actor}
                 </span>
-                <span style={{ fontSize: 10, color: '#555570' }}>
+                <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>
                   {formatTime(msg.ts)}
                 </span>
               </div>
@@ -192,8 +189,8 @@ export function ChatPanel({ doc, actorName, actorColor, onClose }: ChatPanelProp
                 maxWidth: '85%',
                 padding: '6px 10px',
                 borderRadius: isMe ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
-                background: isMe ? 'rgba(124, 58, 237, 0.25)' : 'rgba(255,255,255,0.06)',
-                color: '#e2e2f0',
+                background: isMe ? 'var(--accent-soft)' : 'var(--surface)',
+                color: 'var(--text)',
                 fontSize: 13,
                 lineHeight: 1.4,
                 wordBreak: 'break-word',
@@ -209,14 +206,14 @@ export function ChatPanel({ doc, actorName, actorColor, onClose }: ChatPanelProp
       {/* Input area */}
       <div style={{
         padding: '10px 12px',
-        borderTop: '1px solid rgba(255,255,255,0.06)',
+        borderTop: '1px solid var(--surface)',
         display: 'flex',
         flexDirection: 'column',
         gap: 6,
       }}>
         {/* Note color picker hint */}
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: '#555570' }}>Note bg:</span>
+          <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>Note bg:</span>
           {NOTE_COLORS.map(c => (
             <button
               key={c}
@@ -224,7 +221,7 @@ export function ChatPanel({ doc, actorName, actorColor, onClose }: ChatPanelProp
               style={{
                 width: 14, height: 14, borderRadius: '50%',
                 background: c,
-                border: selectedColor === c ? '2px solid #a78bfa' : '2px solid transparent',
+                border: selectedColor === c ? '2px solid var(--accent)' : '2px solid transparent',
                 cursor: 'pointer',
                 transition: 'border 0.1s',
               }}
@@ -242,10 +239,10 @@ export function ChatPanel({ doc, actorName, actorColor, onClose }: ChatPanelProp
             style={{
               flex: 1,
               padding: '7px 10px',
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
               borderRadius: 6,
-              color: '#e2e2f0',
+              color: 'var(--text)',
               fontSize: 13,
               outline: 'none',
               fontFamily: 'Inter, sans-serif',
@@ -256,10 +253,10 @@ export function ChatPanel({ doc, actorName, actorColor, onClose }: ChatPanelProp
             disabled={!inputValue.trim()}
             style={{
               padding: '7px 12px',
-              background: inputValue.trim() ? 'rgba(124, 58, 237, 0.7)' : 'rgba(255,255,255,0.05)',
+              background: inputValue.trim() ? 'var(--accent)' : 'var(--surface)',
               border: 'none',
               borderRadius: 6,
-              color: inputValue.trim() ? '#fff' : '#555570',
+              color: inputValue.trim() ? '#fff' : 'var(--text-faint)',
               fontSize: 13,
               cursor: inputValue.trim() ? 'pointer' : 'not-allowed',
               transition: 'all 0.15s',
@@ -268,7 +265,7 @@ export function ChatPanel({ doc, actorName, actorColor, onClose }: ChatPanelProp
             Send
           </button>
         </div>
-        <div style={{ fontSize: 10, color: '#555570' }}>
+        <div style={{ fontSize: 10, color: 'var(--text-faint)' }}>
           Press Enter to send · Messages sync via Yjs CRDT
         </div>
       </div>

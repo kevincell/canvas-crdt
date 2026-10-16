@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Box, Button, Chip, Divider, Typography } from '@mui/material';
 import { type Shape, ShapeKind } from '@crdt-canvas/engine';
+import { IconButton } from '../../ui/primitives';
 
 // ─── Stage definitions with contextual collaborative guidance ─────────────────
 
@@ -13,7 +14,7 @@ const RETRO_STAGES = [
     participantHint: 'Select the Note tool (N) or double-click the canvas to add a sticky note.',
     suggestedTool: 'note' as const,
     autoAction: null,
-    color: '#a78bfa',
+    color: 'var(--accent)',
   },
   {
     title: 'Group',
@@ -95,9 +96,9 @@ export function FacilitationPanel({
     boxSizing: 'border-box',
     padding: '7px 8px',
     borderRadius: 6,
-    background: 'rgba(255,255,255,.05)',
-    border: '1px solid rgba(255,255,255,.1)',
-    color: '#e2e2f0',
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    color: 'var(--text)',
     fontSize: 12,
   };
 
@@ -110,20 +111,20 @@ export function FacilitationPanel({
   const activeFrames = shapes.filter(s => !s.deleted && s.data.kind === ShapeKind.Rect && !!(s.data as any).frameTitle).length;
 
   return (
-    <Box role="region" aria-label="Facilitation tools" sx={{ height: '100%', display: 'flex', flexDirection: 'column', color: '#e2e2f0' }}>
+    <Box role="region" aria-label="Facilitation tools" sx={{ height: '100%', display: 'flex', flexDirection: 'column', color: 'var(--text)' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1.5, py: 1.25 }}>
         <Typography sx={{ fontSize: 13, fontWeight: 700 }}>Facilitation</Typography>
-        <Button size="small" onClick={onClose} aria-label="Close facilitation panel">Close</Button>
+        <IconButton icon="x" label="Close facilitation panel" size="sm" onClick={onClose} />
       </Box>
-      <Divider sx={{ borderColor: 'rgba(255,255,255,.08)' }} />
+      <Divider sx={{ borderColor: 'var(--border)' }} />
 
       {/* ── Guided retrospective ── */}
       <Box sx={{ p: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <Typography sx={{ fontSize: 11, fontWeight: 700, color: '#c4b5fd' }}>Guided retrospective</Typography>
+        <Typography sx={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>Guided retrospective</Typography>
 
         {retrospectiveStep < 0 ? (
           <>
-            <Typography sx={{ fontSize: 10, color: '#85859b' }}>
+            <Typography sx={{ fontSize: 10, color: 'var(--text-muted)' }}>
               A shared four-step flow: gather, group, vote, and commit to an action.
             </Typography>
             <Button variant="outlined" size="small" onClick={() => onSetRetrospectiveStep(0)}>
@@ -142,14 +143,14 @@ export function FacilitationPanel({
                     width: i === retrospectiveStep ? 20 : 8,
                     height: 8,
                     borderRadius: 4,
-                    bgcolor: i === retrospectiveStep ? activeStage.color : i < retrospectiveStep ? '#4ade80' : 'rgba(255,255,255,.15)',
+                    bgcolor: i === retrospectiveStep ? activeStage.color : i < retrospectiveStep ? '#4ade80' : 'var(--border)',
                     transition: 'all 0.3s ease',
                     cursor: 'pointer',
                   }}
                   onClick={() => onSetRetrospectiveStep(i)}
                 />
               ))}
-              <Typography sx={{ fontSize: 10, color: '#8888a8', ml: 0.5 }}>
+              <Typography sx={{ fontSize: 10, color: 'var(--text-muted)', ml: 0.5 }}>
                 {retrospectiveStep + 1} / {RETRO_STAGES.length}
               </Typography>
             </Box>
@@ -164,32 +165,32 @@ export function FacilitationPanel({
                 <Chip
                   label={voting ? 'Voting open' : 'Voting closed'}
                   size="small"
-                  sx={{ fontSize: 9, height: 18, bgcolor: voting ? 'rgba(251,191,36,.2)' : 'rgba(255,255,255,.06)', color: voting ? '#fbbf24' : '#8888a8' }}
+                  sx={{ fontSize: 9, height: 18, bgcolor: voting ? 'rgba(251,191,36,.2)' : 'var(--surface)', color: voting ? '#fbbf24' : 'var(--text-muted)' }}
                 />
               )}
             </Box>
 
             {/* Prompt */}
-            <Typography sx={{ fontSize: 11, color: '#c4c4d8', lineHeight: 1.6 }}>
+            <Typography sx={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.6 }}>
               {activeStage.prompt}
             </Typography>
 
             {/* Facilitator guidance */}
-            <Box sx={{ bgcolor: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.07)', borderRadius: 1.5, p: 1 }}>
-              <Typography sx={{ fontSize: 9, fontWeight: 700, color: '#8888a8', textTransform: 'uppercase', letterSpacing: 1, mb: 0.5 }}>
+            <Box sx={{ bgcolor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 1.5, p: 1 }}>
+              <Typography sx={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, mb: 0.5 }}>
                 Facilitator guidance
               </Typography>
-              <Typography sx={{ fontSize: 10, color: '#a0a0b8', lineHeight: 1.5 }}>
+              <Typography sx={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5 }}>
                 {activeStage.facilitatorGuidance}
               </Typography>
             </Box>
 
             {/* Participant hint */}
-            <Box sx={{ bgcolor: 'rgba(167,139,250,.08)', border: '1px solid rgba(167,139,250,.18)', borderRadius: 1.5, p: 1 }}>
-              <Typography sx={{ fontSize: 9, fontWeight: 700, color: '#a78bfa', textTransform: 'uppercase', letterSpacing: 1, mb: 0.5 }}>
+            <Box sx={{ bgcolor: 'var(--accent-soft)', border: '1px solid var(--accent-soft)', borderRadius: 1.5, p: 1 }}>
+              <Typography sx={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: 1, mb: 0.5 }}>
                 Participant hint
               </Typography>
-              <Typography sx={{ fontSize: 10, color: '#c4b5fd', lineHeight: 1.5 }}>
+              <Typography sx={{ fontSize: 10, color: 'var(--accent)', lineHeight: 1.5 }}>
                 {activeStage.participantHint}
               </Typography>
             </Box>
@@ -221,7 +222,7 @@ export function FacilitationPanel({
                 variant="contained"
                 size="small"
                 onClick={() => onSetVoting(true, Number(maxVotes) || 3)}
-                sx={{ bgcolor: '#fbbf24', color: '#1e1e30', '&:hover': { bgcolor: '#f59e0b' }, fontWeight: 700, fontSize: 11 }}
+                sx={{ bgcolor: '#fbbf24', color: 'var(--panel-solid)', '&:hover': { bgcolor: '#f59e0b' }, fontWeight: 700, fontSize: 11 }}
               >
                 Start voting now
               </Button>
@@ -252,44 +253,44 @@ export function FacilitationPanel({
         ) : null}
       </Box>
 
-      <Divider sx={{ borderColor: 'rgba(255,255,255,.08)' }} />
+      <Divider sx={{ borderColor: 'var(--border)' }} />
 
       {/* ── Dot voting ── */}
       <Box sx={{ p: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <Typography sx={{ fontSize: 11, fontWeight: 700, color: '#c4b5fd' }}>Dot voting</Typography>
-        <label style={{ fontSize: 10, color: '#9898ae' }}>
+        <Typography sx={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>Dot voting</Typography>
+        <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>
           Votes per person (1–20)
           <input type="number" min="1" max="20" value={maxVotes} onChange={event => setMaxVotes(event.target.value)} style={inputStyle} />
         </label>
         <Button variant={voting ? 'contained' : 'outlined'} size="small" onClick={() => onSetVoting(!voting, Number(maxVotes) || 3)} aria-pressed={voting}>
           {voting ? 'End voting' : 'Start voting'}
         </Button>
-        <Typography sx={{ fontSize: 10, color: '#85859b' }}>
+        <Typography sx={{ fontSize: 10, color: 'var(--text-muted)' }}>
           {voting ? 'Click notes or objects to add or remove a vote.' : 'Start a round, then click an object to vote.'}
         </Typography>
       </Box>
 
-      <Divider sx={{ borderColor: 'rgba(255,255,255,.08)' }} />
+      <Divider sx={{ borderColor: 'var(--border)' }} />
 
       {/* ── Shared timer ── */}
       <Box sx={{ p: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <Typography sx={{ fontSize: 11, fontWeight: 700, color: '#c4b5fd' }}>Shared timer</Typography>
+        <Typography sx={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>Shared timer</Typography>
         {remainingSeconds !== null && (
           <Box aria-live="off" sx={{ textAlign: 'center', py: 0.5 }}>
-            <Typography sx={{ color: '#e2e2f0', fontSize: 12 }}>{timerLabel}</Typography>
+            <Typography sx={{ color: 'var(--text)', fontSize: 12 }}>{timerLabel}</Typography>
             <Typography
               aria-label={`${Math.floor((remainingSeconds ?? 0) / 60)} minutes ${String((remainingSeconds ?? 0) % 60).padStart(2, '0')} seconds remaining`}
-              sx={{ fontSize: 30, fontWeight: 800, fontVariantNumeric: 'tabular-nums', color: (remainingSeconds ?? 0) < 60 ? '#fb7185' : '#a78bfa' }}
+              sx={{ fontSize: 30, fontWeight: 800, fontVariantNumeric: 'tabular-nums', color: (remainingSeconds ?? 0) < 60 ? '#fb7185' : 'var(--accent)' }}
             >
               {clock}
             </Typography>
           </Box>
         )}
-        <label style={{ fontSize: 10, color: '#9898ae' }}>
+        <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>
           Timer label
           <input value={label} maxLength={48} onChange={event => setLabel(event.target.value)} style={inputStyle} />
         </label>
-        <label style={{ fontSize: 10, color: '#9898ae' }}>
+        <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>
           Minutes (1–60)
           <input type="number" min="1" max="60" value={minutes} onChange={event => setMinutes(event.target.value)} style={inputStyle} />
         </label>
@@ -299,14 +300,14 @@ export function FacilitationPanel({
         {timerRunning && <Button size="small" onClick={onStopTimer}>Stop timer</Button>}
       </Box>
 
-      <Divider sx={{ borderColor: 'rgba(255,255,255,.08)' }} />
+      <Divider sx={{ borderColor: 'var(--border)' }} />
 
       {/* ── Vote leaderboard ── */}
       <Box sx={{ p: 1.5, minHeight: 0, overflowY: 'auto', flex: 1 }}>
-        <Typography sx={{ fontSize: 11, fontWeight: 700, color: '#c4b5fd', mb: 0.75 }}>Votes</Typography>
+        <Typography sx={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', mb: 0.75 }}>Votes</Typography>
         {voteRows.length ? (
           voteRows.map((row, i) => (
-            <Box key={row.id} sx={{ display: 'flex', gap: 1, justifyContent: 'space-between', py: 0.5, borderBottom: '1px solid rgba(255,255,255,.05)', alignItems: 'center' }}>
+            <Box key={row.id} sx={{ display: 'flex', gap: 1, justifyContent: 'space-between', py: 0.5, borderBottom: '1px solid var(--surface)', alignItems: 'center' }}>
               {i === 0 && <Typography sx={{ fontSize: 12 }}>🥇</Typography>}
               {i === 1 && <Typography sx={{ fontSize: 12 }}>🥈</Typography>}
               {i === 2 && <Typography sx={{ fontSize: 12 }}>🥉</Typography>}
@@ -320,7 +321,7 @@ export function FacilitationPanel({
             </Box>
           ))
         ) : (
-          <Typography sx={{ fontSize: 10, color: '#85859b' }}>No votes yet.</Typography>
+          <Typography sx={{ fontSize: 10, color: 'var(--text-muted)' }}>No votes yet.</Typography>
         )}
       </Box>
     </Box>

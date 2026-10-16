@@ -2,31 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CRDT Canvas — Collaborative Drawing Board</title>
-    <meta name="description" content="Real-time collaborative drawing board using CRDTs and WebRTC" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet" />
-    <!-- Polyfill Node.js globals for browser -->
-    <script>
-      // Must use var (not let/const) so it becomes a global property accessible as bare identifier
-      var global = typeof globalThis !== 'undefined' ? globalThis : window;
-      var process = {
-        env: { NODE_ENV: 'development' },
-        cwd: function() { return '/'; },
-        nextTick: function(cb) {
-          var args = Array.prototype.slice.call(arguments, 1);
-          if (typeof queueMicrotask === 'function') {
-            queueMicrotask(function() { cb.apply(null, args); });
-          } else {
-            setTimeout(function() { cb.apply(null, args); }, 0);
-          }
-        }
-      };
-    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>CRDT Canvas</title>
+    <meta name="description" content="A free, offline-first, end-to-end encrypted collaborative whiteboard. No account, unlimited boards, peer-to-peer sync that merges instead of overwriting." />
+    <meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111215" media="(prefers-color-scheme: dark)" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta property="og:title" content="CRDT Canvas" />
+    <meta property="og:description" content="Free, offline-first, peer-to-peer whiteboard that merges instead of overwriting." />
+    <script src="./node-globals.js"></script>
   </head>
   <body>
+    <noscript>CRDT Canvas needs JavaScript to run.</noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

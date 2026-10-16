@@ -1,5 +1,7 @@
 # Roadmap delivery tracker
 
+> **Status (v1.0):** this document describes the v0.1 design. Since 1.0, shapes use per-property registers (schema v2), conflicts are detected causally, undo uses `Y.UndoManager`, boards are end-to-end encrypted via a key in the URL fragment, and the UI was rebuilt. See [RESEARCH.md](./RESEARCH.md) and the [README](../README.md#architecture) for the current design.
+
 This tracker records implementation progress against [PRODUCT_ROADMAP.md](./PRODUCT_ROADMAP.md). **Implemented** means code is present and automated verification passes; it does not imply release readiness. The roadmap's two peer, reconnect, persistence, browser, and accessibility acceptance checks still need a manual release pass.
 
 ## Implemented increments

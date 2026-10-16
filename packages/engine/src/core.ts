@@ -32,6 +32,8 @@ export type ShapeMetadata = {
   frameTitle?: string;
   /** Optional parent frame membership for future frame-aware navigation. */
   frameId?: string;
+  /** Outline dash pattern for strokes, lines and outlined shapes. */
+  strokeStyle?: 'solid' | 'dashed' | 'dotted';
 };
 
 export type StrokeShape = ShapeMetadata & {
@@ -51,6 +53,8 @@ export type RectShape = ShapeMetadata & {
   fillOpacity?: number;
   strokeWidth?: number;
   cornerRadius?: number;
+  /** Centred text inside the shape (diagram boxes). */
+  label?: string;
 };
 
 export type TextShape = ShapeMetadata & {
@@ -59,6 +63,8 @@ export type TextShape = ShapeMetadata & {
   y: number;
   text: string;
   color: string;
+  /** World-space font size; defaults to 16. */
+  fontSize?: number;
 };
 
 export type EllipseShape = ShapeMetadata & {
@@ -70,6 +76,8 @@ export type EllipseShape = ShapeMetadata & {
   color: string;
   fillOpacity?: number;
   strokeWidth?: number;
+  /** Centred text inside the shape (diagram nodes). */
+  label?: string;
 };
 
 export type LineShape = ShapeMetadata & {
@@ -104,6 +112,8 @@ export type NoteShape = ShapeMetadata & {
   text: string;
   color: string;
   bgColor: string;
+  /** World-space font size; defaults to 15. */
+  fontSize?: number;
 };
 
 export type ShapeData = StrokeShape | RectShape | EllipseShape | LineShape | TextShape | ImageShape | NoteShape;
@@ -175,6 +185,47 @@ export function createShape<T extends ShapePayload>(
 
 // ─── Shape Geometry Helpers ──────────────────────────────────────────────────
 
+export const DEFAULT_TEXT_SIZE = 16;
+export const DEFAULT_NOTE_TEXT_SIZE = 15;
+export const TEXT_LINE_HEIGHT = 1.25;
+/** Average glyph advance relative to font size (Inter-like sans). */
+export const TEXT_CHAR_WIDTH = 0.5625;
+
+/**
+ * Deterministic text box estimate shared by every peer. Rendering measures
+ * real glyphs, but layout decisions that must agree across peers (overlap
+ * resolution, bounds, conflict sizes) use this pure approximation.
+ */
+export function textMetrics(text: string, fontSize: number = DEFAULT_TEXT_SIZE): { width: number; height: number; fontSize: number; lineHeight: number; lines: string[] } {
+  const size = Number.isFinite(fontSize) && fontSize > 0 ? fontSize : DEFAULT_TEXT_SIZE;
+  const lines = text.split('\n');
+  const lineHeight = size * TEXT_LINE_HEIGHT;
+  return {
+    width: Math.max(1, ...lines.map(line => line.length)) * size * TEXT_CHAR_WIDTH,
+    height: Math.max(1, lines.length) * lineHeight,
+    fontSize: size,
+    lineHeight,
+    lines,
+  };
+}
+
+/** Translate any shape record by (dx, dy). */
+export function translateShapeData<T extends ShapeData>(data: T, dx: number, dy: number): T {
+  if (data.kind === ShapeKind.Ellipse) return { ...data, cx: data.cx + dx, cy: data.cy + dy };
+  if (data.kind === ShapeKind.Line) return { ...data, x1: data.x1 + dx, y1: data.y1 + dy, x2: data.x2 + dx, y2: data.y2 + dy };
+  if (data.kind === ShapeKind.Stroke) return { ...data, points: data.points.map(p => ({ x: p.x + dx, y: p.y + dy })) };
+  return { ...data, x: (data as { x: number }).x + dx, y: (data as { y: number }).y + dy };
+}
+
+/** Only the geometric fields of a record (what a move/resize writes). */
+export function geometryPatch(data: ShapeData): Partial<ShapeData> {
+  if (data.kind === ShapeKind.Ellipse) return { cx: data.cx, cy: data.cy, rx: data.rx, ry: data.ry } as Partial<ShapeData>;
+  if (data.kind === ShapeKind.Line) return { x1: data.x1, y1: data.y1, x2: data.x2, y2: data.y2 } as Partial<ShapeData>;
+  if (data.kind === ShapeKind.Stroke) return { points: data.points } as Partial<ShapeData>;
+  if (data.kind === ShapeKind.Text) return { x: data.x, y: data.y } as Partial<ShapeData>;
+  return { x: data.x, y: data.y, w: data.w, h: data.h } as Partial<ShapeData>;
+}
+
 export function shapeId(s: Shape): string {
   return s.id;
 }
@@ -207,10 +258,8 @@ export function shapeBBox(s: Shape): { minX: number; minY: number; maxX: number;
     return { minX: Math.min(d.x1, d.x2), minY: Math.min(d.y1, d.y2), maxX: Math.max(d.x1, d.x2), maxY: Math.max(d.y1, d.y2) };
   }
   if (d.kind === ShapeKind.Text) {
-    const lines = d.text.split('\n');
-    const estW = Math.max(1, ...lines.map(line => line.length)) * 9;
-    const estH = Math.max(1, lines.length) * 20;
-    return { minX: d.x, minY: d.y - 16, maxX: d.x + estW, maxY: d.y - 16 + estH };
+    const m = textMetrics(d.text, d.fontSize);
+    return { minX: d.x, minY: d.y - m.fontSize, maxX: d.x + m.width, maxY: d.y - m.fontSize + m.height };
   }
   if (d.kind === ShapeKind.Image) {
     return { minX: d.x, minY: d.y, maxX: d.x + d.w, maxY: d.y + d.h };
@@ -312,15 +361,16 @@ export function scaleFrameMember(
  * relative vertical proximity, preserving a readable margin.
  */
 export function resolveTextOverlap(
-  candidate: { x: number; y: number; text: string; id?: string },
+  candidate: { x: number; y: number; text: string; id?: string; fontSize?: number },
   shapes: Shape[],
   margin: number = 8,
   preferredDirection: 'auto' | 'above' | 'below' = 'auto'
 ): { x: number; y: number } {
   let { x, y } = candidate;
-  const lines = candidate.text.split('\n');
-  const candW = Math.max(1, ...lines.map(line => line.length)) * 9;
-  const candH = Math.max(1, lines.length) * 20;
+  const candMetrics = textMetrics(candidate.text, candidate.fontSize);
+  const candW = candMetrics.width;
+  const candH = candMetrics.height;
+  const candTop = candMetrics.fontSize;
 
   const otherTexts = shapes.filter(s =>
     !s.deleted &&
@@ -340,19 +390,19 @@ export function resolveTextOverlap(
 
     const candMinX = x;
     const candMaxX = x + candW;
-    const candMinY = y - 16;
-    const candMaxY = y - 16 + candH;
+    const candMinY = y - candTop;
+    const candMaxY = y - candTop + candH;
     const candCenterY = candMinY + candH / 2;
 
     for (const other of otherTexts) {
       const oData = other.data as TextShape;
-      const oLines = oData.text.split('\n');
-      const oW = Math.max(1, ...oLines.map(line => line.length)) * 9;
-      const oH = Math.max(1, oLines.length) * 20;
+      const oMetrics = textMetrics(oData.text, oData.fontSize);
+      const oW = oMetrics.width;
+      const oH = oMetrics.height;
       const oMinX = oData.x;
       const oMaxX = oData.x + oW;
-      const oMinY = oData.y - 16;
-      const oMaxY = oData.y - 16 + oH;
+      const oMinY = oData.y - oMetrics.fontSize;
+      const oMaxY = oData.y - oMetrics.fontSize + oH;
       const oCenterY = oMinY + oH / 2;
 
       // Overlap with margin
@@ -365,9 +415,9 @@ export function resolveTextOverlap(
           direction = candCenterY <= oCenterY ? 'above' : 'below';
         }
         if (direction === 'above') {
-          y = oMinY - margin - candH + 16;
+          y = oMinY - margin - candH + candTop;
         } else {
-          y = oMaxY + margin + 16;
+          y = oMaxY + margin + candTop;
         }
         break;
       }
@@ -391,9 +441,9 @@ export function tidyTextOverlaps(
   if (activeTexts.length <= 1) return updates;
 
   // Clone positions for resolution
-  const simulated: Array<{ id: string; x: number; y: number; text: string }> = activeTexts.map(s => {
+  const simulated: Array<{ id: string; x: number; y: number; text: string; fontSize?: number }> = activeTexts.map(s => {
     const d = s.data as TextShape;
-    return { id: s.id, x: d.x, y: d.y, text: d.text };
+    return { id: s.id, x: d.x, y: d.y, text: d.text, fontSize: d.fontSize };
   });
 
   // Sort primarily by vertical Y position
@@ -404,10 +454,10 @@ export function tidyTextOverlaps(
     const prevShapes = simulated.slice(0, i).map(s => ({
       id: s.id,
       deleted: false,
-      data: { kind: ShapeKind.Text, x: s.x, y: s.y, text: s.text } as TextShape,
+      data: { kind: ShapeKind.Text, x: s.x, y: s.y, text: s.text, fontSize: s.fontSize } as TextShape,
     })) as Shape[];
 
-    const resolved = resolveTextOverlap({ x: cur.x, y: cur.y, text: cur.text, id: cur.id }, prevShapes, margin, 'below');
+    const resolved = resolveTextOverlap({ x: cur.x, y: cur.y, text: cur.text, id: cur.id, fontSize: cur.fontSize }, prevShapes, margin, 'below');
     if (resolved.y !== cur.y) {
       cur.y = resolved.y;
       updates.set(cur.id, { x: cur.x, y: cur.y });

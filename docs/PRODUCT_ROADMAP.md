@@ -1,5 +1,7 @@
 # CRDT Canvas: Agile Product Roadmap
 
+> **Status (v1.0):** this document describes the v0.1 design. Since 1.0, shapes use per-property registers (schema v2), conflicts are detected causally, undo uses `Y.UndoManager`, boards are end-to-end encrypted via a key in the URL fragment, and the UI was rebuilt. See [RESEARCH.md](./RESEARCH.md) and the [README](../README.md#architecture) for the current design.
+
 ## Product intent
 
 Evolve the current collaborative drawing prototype into a dependable visual workspace for brainstorming, planning, and presenting. The target experience should feel immediate and forgiving: people can create and edit content without fighting tools, see collaborators clearly, recover from mistakes, and trust that a board will still be there when they return.

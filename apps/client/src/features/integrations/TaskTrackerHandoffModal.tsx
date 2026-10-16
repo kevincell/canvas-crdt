@@ -108,7 +108,7 @@ export function TaskTrackerHandoffModal({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        bgcolor: 'rgba(5, 5, 10, 0.82)',
+        bgcolor: 'var(--panel-solid)',
         backdropFilter: 'blur(8px)',
         p: 2,
       }}
@@ -122,25 +122,25 @@ export function TaskTrackerHandoffModal({
           maxHeight: '90vh',
           display: 'flex',
           flexDirection: 'column',
-          bgcolor: 'rgba(20, 20, 32, 0.98)',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
+          bgcolor: 'var(--panel-solid)',
+          border: '1px solid var(--border)',
           borderRadius: 3,
-          boxShadow: '0 24px 72px rgba(0, 0, 0, 0.7)',
+          boxShadow: '0 24px 72px rgba(0,0,0,0.35)',
           overflow: 'hidden',
-          color: '#e2e2f0',
+          color: 'var(--text)',
         }}
       >
         {/* Header */}
         <Box sx={{ p: 2.5, pb: 1.5, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <Box>
-            <Typography sx={{ fontSize: 17, fontWeight: 800, color: '#f3e8ff' }}>
+            <Typography sx={{ fontSize: 17, fontWeight: 800, color: 'var(--text)' }}>
               Task Tracker & Workflow Handoff
             </Typography>
-            <Typography sx={{ color: '#94a3b8', fontSize: 12, mt: 0.25 }}>
+            <Typography sx={{ color: 'var(--text-muted)', fontSize: 12, mt: 0.25 }}>
               Export structured tasks to GitHub Issues, Jira, Linear, or custom webhook endpoints.
             </Typography>
           </Box>
-          <IconButton onClick={onClose} aria-label="Close dialog" sx={{ color: '#94a3b8', '&:hover': { color: '#fff' } }}>
+          <IconButton onClick={onClose} aria-label="Close dialog" sx={{ color: 'var(--text-muted)', '&:hover': { color: '#fff' } }}>
             <CloseIcon fontSize="small" />
           </IconButton>
         </Box>
@@ -149,11 +149,11 @@ export function TaskTrackerHandoffModal({
         <Box sx={{ px: 2.5, pb: 1.5 }}>
           <Alert
             severity="info"
-            icon={<SecurityIcon sx={{ color: '#a78bfa' }} />}
+            icon={<SecurityIcon sx={{ color: 'var(--accent)' }} />}
             sx={{
-              bgcolor: 'rgba(124, 58, 237, 0.08)',
-              color: '#ddd6fe',
-              border: '1px solid rgba(124, 58, 237, 0.25)',
+              bgcolor: 'var(--accent-soft)',
+              color: 'var(--text)',
+              border: '1px solid var(--accent-soft)',
               fontSize: 11,
               py: 0.5,
               '& .MuiAlert-icon': { mr: 1, py: 0.25 },
@@ -166,15 +166,15 @@ export function TaskTrackerHandoffModal({
 
         {/* Scope Selector */}
         <Box sx={{ px: 2.5, pb: 1.5, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-          <Typography sx={{ fontSize: 11, color: '#8888a8', fontWeight: 600 }}>Scope:</Typography>
+          <Typography sx={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Scope:</Typography>
           <Chip
             label={`All Notes (${shapes.filter(s => !s.deleted && (s.data.kind === ShapeKind.Note || s.data.kind === ShapeKind.Text)).length})`}
             size="small"
             clickable
             onClick={() => setScope('all')}
             sx={{
-              bgcolor: scope === 'all' ? 'rgba(124, 58, 237, 0.35)' : 'rgba(255, 255, 255, 0.04)',
-              color: scope === 'all' ? '#c4b5fd' : '#8888a8',
+              bgcolor: scope === 'all' ? 'var(--accent-soft)' : 'var(--surface)',
+              color: scope === 'all' ? 'var(--accent)' : 'var(--text-muted)',
               fontSize: 11,
             }}
           />
@@ -185,8 +185,8 @@ export function TaskTrackerHandoffModal({
               clickable
               onClick={() => setScope('selected')}
               sx={{
-                bgcolor: scope === 'selected' ? 'rgba(124, 58, 237, 0.35)' : 'rgba(255, 255, 255, 0.04)',
-                color: scope === 'selected' ? '#c4b5fd' : '#8888a8',
+                bgcolor: scope === 'selected' ? 'var(--accent-soft)' : 'var(--surface)',
+                color: scope === 'selected' ? 'var(--accent)' : 'var(--text-muted)',
                 fontSize: 11,
               }}
             />
@@ -199,15 +199,15 @@ export function TaskTrackerHandoffModal({
               clickable
               onClick={() => setScope(f.id)}
               sx={{
-                bgcolor: scope === f.id ? 'rgba(124, 58, 237, 0.35)' : 'rgba(255, 255, 255, 0.04)',
-                color: scope === f.id ? '#c4b5fd' : '#8888a8',
+                bgcolor: scope === f.id ? 'var(--accent-soft)' : 'var(--surface)',
+                color: scope === f.id ? 'var(--accent)' : 'var(--text-muted)',
                 fontSize: 11,
               }}
             />
           ))}
         </Box>
 
-        <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.08)' }} />
+        <Divider sx={{ borderColor: 'var(--border)' }} />
 
         {/* Format Tabs */}
         <Box sx={{ px: 2.5, pt: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -220,10 +220,10 @@ export function TaskTrackerHandoffModal({
                 minHeight: 36,
                 fontSize: 11,
                 textTransform: 'none',
-                color: '#8888a8',
-                '&.Mui-selected': { color: '#c4b5fd', fontWeight: 700 },
+                color: 'var(--text-muted)',
+                '&.Mui-selected': { color: 'var(--accent)', fontWeight: 700 },
               },
-              '& .MuiTabs-indicator': { bgcolor: '#a78bfa' },
+              '& .MuiTabs-indicator': { bgcolor: 'var(--accent)' },
             }}
           >
             <Tab value="markdown" label={`GitHub Issues / Markdown (${payload.totalTasks})`} />
@@ -237,7 +237,7 @@ export function TaskTrackerHandoffModal({
           {activeTab === 'markdown' && (
             <>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Typography sx={{ fontSize: 11, color: '#94a3b8' }}>
+                <Typography sx={{ fontSize: 11, color: 'var(--text-muted)' }}>
                   Markdown checklist ready to paste into GitHub issues, discussion boards, or release notes:
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1 }}>
@@ -246,7 +246,7 @@ export function TaskTrackerHandoffModal({
                     variant="outlined"
                     startIcon={<ContentCopyIcon sx={{ fontSize: 14 }} />}
                     onClick={() => handleCopy(markdownContent)}
-                    sx={{ textTransform: 'none', fontSize: 11, color: copied ? '#6ee7b7' : '#c4b5fd' }}
+                    sx={{ textTransform: 'none', fontSize: 11, color: copied ? '#6ee7b7' : 'var(--accent)' }}
                   >
                     {copied ? 'Copied!' : 'Copy Markdown'}
                   </Button>
@@ -267,9 +267,9 @@ export function TaskTrackerHandoffModal({
                   flex: 1,
                   p: 1.5,
                   borderRadius: 2,
-                  bgcolor: 'rgba(0, 0, 0, 0.4)',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  color: '#e2e2f0',
+                  bgcolor: 'rgba(0,0,0,0.20)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text)',
                   fontSize: 11,
                   fontFamily: 'monospace',
                   whiteSpace: 'pre-wrap',
@@ -285,7 +285,7 @@ export function TaskTrackerHandoffModal({
           {activeTab === 'csv' && (
             <>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Typography sx={{ fontSize: 11, color: '#94a3b8' }}>
+                <Typography sx={{ fontSize: 11, color: 'var(--text-muted)' }}>
                   Standard CSV format for Jira, Linear, or Excel issue import:
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1 }}>
@@ -294,7 +294,7 @@ export function TaskTrackerHandoffModal({
                     variant="outlined"
                     startIcon={<ContentCopyIcon sx={{ fontSize: 14 }} />}
                     onClick={() => handleCopy(csvContent)}
-                    sx={{ textTransform: 'none', fontSize: 11, color: copied ? '#6ee7b7' : '#c4b5fd' }}
+                    sx={{ textTransform: 'none', fontSize: 11, color: copied ? '#6ee7b7' : 'var(--accent)' }}
                   >
                     {copied ? 'Copied!' : 'Copy CSV'}
                   </Button>
@@ -315,9 +315,9 @@ export function TaskTrackerHandoffModal({
                   flex: 1,
                   p: 1.5,
                   borderRadius: 2,
-                  bgcolor: 'rgba(0, 0, 0, 0.4)',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  color: '#e2e2f0',
+                  bgcolor: 'rgba(0,0,0,0.20)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text)',
                   fontSize: 11,
                   fontFamily: 'monospace',
                   whiteSpace: 'pre-wrap',
@@ -332,7 +332,7 @@ export function TaskTrackerHandoffModal({
 
           {activeTab === 'webhook' && (
             <>
-              <Typography sx={{ fontSize: 11, color: '#94a3b8' }}>
+              <Typography sx={{ fontSize: 11, color: 'var(--text-muted)' }}>
                 Send JSON task payload directly to your CI/CD pipeline, Slack bot, or task tracker endpoint with explicit confirmation:
               </Typography>
               <Box sx={{ display: 'flex', gap: 1 }}>
@@ -345,9 +345,9 @@ export function TaskTrackerHandoffModal({
                     flex: 1,
                     padding: '8px 12px',
                     borderRadius: 8,
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                    color: '#e2e2f0',
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--text)',
                     fontSize: 12,
                     outline: 'none',
                   }}
@@ -373,14 +373,14 @@ export function TaskTrackerHandoffModal({
               )}
 
               <Box sx={{ mt: 1 }}>
-                <Typography sx={{ fontSize: 10, color: '#8888a8', mb: 0.5 }}>Payload preview ({payload.totalTasks} items):</Typography>
+                <Typography sx={{ fontSize: 10, color: 'var(--text-muted)', mb: 0.5 }}>Payload preview ({payload.totalTasks} items):</Typography>
                 <Box
                   component="pre"
                   sx={{
                     p: 1.5,
                     borderRadius: 2,
-                    bgcolor: 'rgba(0, 0, 0, 0.4)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    bgcolor: 'rgba(0,0,0,0.20)',
+                    border: '1px solid var(--border)',
                     color: '#93c5fd',
                     fontSize: 10,
                     fontFamily: 'monospace',
