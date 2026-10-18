@@ -7,6 +7,13 @@ import {
   Slider,
   Tooltip,
   Chip,
+  Menu,
+  MenuItem,
+  ListItemText,
+  ListItemIcon,
+  Divider,
+  LinearProgress,
+  CircularProgress,
 } from '@mui/material';
 import {
   PlayArrow,
@@ -31,13 +38,69 @@ import {
   Fullscreen,
   FullscreenExit,
   AspectRatio,
+  ClosedCaption,
+  ClosedCaptionDisabled,
+  Speed,
+  ScreenShare,
+  StopScreenShare,
+  UploadFile,
+  FiberManualRecord,
+  Subtitles,
+  Check,
+  Keyboard,
 } from '@mui/icons-material';
 import {
   type PeerBroadcast,
   extractYouTubeId,
   extractYouTubePlaylistId,
   calculateEffectiveTime,
+  resolveMediaUrl,
+  getMediaServerOrigin,
+  srtToVtt,
+  PLAYBACK_SPEEDS,
 } from './types';
+
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+
+/** Upload a file's raw bytes to the local media server, reporting progress (0–1). */
+function uploadToMediaServer(
+  file: Blob,
+  filename: string,
+  onProgress: (fraction: number) => void
+): Promise<{ id: string; path: string; url: string; filename: string; size: number }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${getMediaServerOrigin()}/api/media/upload`);
+    // Header values must be ASCII — encode names like "gaana_ಕನ್ನಡ.mp3"
+    xhr.setRequestHeader('X-Filename', encodeURIComponent(filename));
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      let data: any = null;
+      try { data = JSON.parse(xhr.responseText); } catch { /* ignore */ }
+      if (xhr.status >= 200 && xhr.status < 300 && data?.path) resolve(data);
+      else reject(new Error(data?.error || `Upload failed (HTTP ${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new Error('Could not reach the media server (is the signaling server running on port 3001?)'));
+    xhr.onabort = () => reject(new Error('Upload cancelled'));
+    xhr.send(file);
+  });
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || !el.tagName) return false;
+  if (el.isContentEditable) return true;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+  if (el.tagName === 'INPUT') {
+    const type = ((el as HTMLInputElement).type || 'text').toLowerCase();
+    // Sliders, checkboxes and buttons are not "typing" — shortcuts still apply there
+    return !['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'color'].includes(type);
+  }
+  return false;
+}
 
 declare global {
   interface Window {
@@ -51,7 +114,7 @@ interface MediaSyncDockProps {
   broadcasts: PeerBroadcast[];
   isHost: boolean;
   actorName: string;
-  onStartBroadcast: (url: string, title?: string) => void;
+  onStartBroadcast: (url: string, title?: string, options?: { subtitleUrl?: string }) => void;
   onTuneIn: (hostName: string) => void;
   onPlayAll: (time?: number) => void;
   onPauseAll: (time?: number) => void;
@@ -59,8 +122,20 @@ interface MediaSyncDockProps {
   onToggleLoop: () => void;
   onToggleAutoPlayNext: () => void;
   onUpdateTrack?: (track: { videoId?: string; playlistIndex?: number; title?: string; currentTime?: number }) => void;
+  onSetPlaybackRate?: (rate: number) => void;
+  onSetSubtitleUrl?: (url: string | undefined) => void;
+  /** Host heartbeat: publish the host player's real position so peers follow it exactly */
+  onReanchor?: (time: number) => void;
   onStopBroadcast: () => void;
   onClose: () => void;
+  // Screen share
+  isScreenSharing?: boolean;
+  localScreenStream?: MediaStream | null;
+  incomingScreenStream?: MediaStream | null;
+  screenShareHostName?: string | null;
+  screenShareError?: string | null;
+  onStartScreenShare?: (options?: { preferCurrentTab?: boolean; cropTo?: HTMLElement | null }) => Promise<MediaStream | null>;
+  onStopScreenShare?: () => void;
 }
 
 export function MediaSyncDock({
@@ -76,8 +151,18 @@ export function MediaSyncDock({
   onToggleLoop,
   onToggleAutoPlayNext,
   onUpdateTrack,
+  onSetPlaybackRate,
+  onSetSubtitleUrl,
+  onReanchor,
   onStopBroadcast,
   onClose,
+  isScreenSharing = false,
+  localScreenStream = null,
+  incomingScreenStream = null,
+  screenShareHostName = null,
+  screenShareError = null,
+  onStartScreenShare,
+  onStopScreenShare,
 }: MediaSyncDockProps) {
   const [isMinimized, setIsMinimized] = useState(false);
   const [isLocallyPaused, setIsLocallyPaused] = useState(false);
@@ -91,6 +176,51 @@ export function MediaSyncDock({
   const [isWideScreen, setIsWideScreen] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [showOverlayControls, setShowOverlayControls] = useState(true);
+
+  // Feature 3: Captions & Speed (per-peer / local)
+  const [captionsEnabled, setCaptionsEnabled] = useState(false);
+  // Listeners follow the host's speed; a listener may override it locally (which pauses auto-sync)
+  const [speedOverride, setSpeedOverride] = useState<number | null>(null);
+  // Listener skipped ahead/back on their own — auto-sync stays off until they press Sync to Host
+  const [peerSkipped, setPeerSkipped] = useState(false);
+  // Listener's measured offset from the host in seconds (+ ahead / - behind), for the readout
+  const [syncDrift, setSyncDrift] = useState<number | null>(null);
+  const [speedMenuAnchor, setSpeedMenuAnchor] = useState<HTMLElement | null>(null);
+  const [showShortcutHelp, setShowShortcutHelp] = useState(false);
+
+  // Feature 1: Local file upload
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const subtitleInputRef = useRef<HTMLInputElement | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadLabel, setUploadLabel] = useState('');
+  const [isAudioOnly, setIsAudioOnly] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
+
+  // Feature 2: Screen share video element
+  const screenVideoRef = useRef<HTMLVideoElement | null>(null);
+  const screenPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const [screenNeedsClick, setScreenNeedsClick] = useState(false);
+  const [isStartingShare, setIsStartingShare] = useState(false);
+  // "Relay to peers": host streams its own player (this tab, cropped to the player) over WebRTC
+  const [isRelaying, setIsRelaying] = useState(false);
+  const playerAreaRef = useRef<HTMLDivElement | null>(null);
+  const isViewingScreen = !!incomingScreenStream && !isScreenSharing;
+  const screenActive = isViewingScreen || isScreenSharing;
+
+  // Small transient toast
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((message: string, ms = 2600) => {
+    setToast(message);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), ms);
+  }, []);
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
+
+  // Shortcut scope: only while the user is "in" the dock, so canvas Space-pan / arrow-nudge keep working
+  const dockHoverRef = useRef(false);
+  const dockFocusRef = useRef(false);
 
   // Ref for the entire dock container (used for native fullscreen API)
   const dockContainerRef = useRef<HTMLDivElement | null>(null);
@@ -204,7 +334,11 @@ export function MediaSyncDock({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const ytPlayerRef = useRef<any>(null);
-  const ytContainerId = useRef<string>(`yt-player-${Math.random().toString(36).substring(2, 8)}`);
+  // React owns only this wrapper. The YouTube API REPLACES its target element with an iframe, so
+  // the target is created imperatively inside the wrapper — otherwise React later tries to remove
+  // a node YouTube already swapped out, which crashed the player area (black screen) when
+  // switching from a YouTube broadcast to an uploaded file.
+  const ytHostRef = useRef<HTMLDivElement | null>(null);
   const isInternalUpdate = useRef(false);
   const isPlayerReadyRef = useRef(false);
   const lastBroadcastTimestamp = useRef(0);
@@ -221,8 +355,186 @@ export function MediaSyncDock({
   const onUpdateTrackRef = useRef(onUpdateTrack);
   onUpdateTrackRef.current = onUpdateTrack;
 
-  const youtubeVideoId = currentBroadcast?.url ? extractYouTubeId(currentBroadcast.url) : (currentBroadcast?.videoId || null);
-  const youtubePlaylistId = currentBroadcast?.url ? (extractYouTubePlaylistId(currentBroadcast.url) || currentBroadcast?.playlistId || null) : (currentBroadcast?.playlistId || null);
+  // ---- Playback speed / captions / quality (applied to whichever player is active) ----
+  const hostRate = currentBroadcast?.playbackRate && currentBroadcast.playbackRate > 0 ? currentBroadcast.playbackRate : 1;
+  const effectiveRate = isHost ? hostRate : (speedOverride ?? hostRate);
+  // A listener who picked their own speed has deliberately left sync — don't fight them
+  const isDesyncedByChoice = !isHost && (peerSkipped || (speedOverride !== null && Math.abs(speedOverride - hostRate) > 0.001));
+  const isDirectMedia = currentBroadcast?.mediaType === 'direct';
+  const isServerMedia = !!currentBroadcast?.url?.startsWith('/api/media/');
+  const directSrc = isDirectMedia ? resolveMediaUrl(currentBroadcast?.url) : '';
+  const subtitleSrc = currentBroadcast?.subtitleUrl ? resolveMediaUrl(currentBroadcast.subtitleUrl) : '';
+
+  const effectiveRateRef = useRef(effectiveRate);
+  effectiveRateRef.current = effectiveRate;
+  const captionsEnabledRef = useRef(captionsEnabled);
+  captionsEnabledRef.current = captionsEnabled;
+  const isDesyncedRef = useRef(isDesyncedByChoice);
+  isDesyncedRef.current = isDesyncedByChoice;
+
+  const applyYtRate = useCallback((player: any, rate: number) => {
+    try {
+      if (!player?.setPlaybackRate) return;
+      if (typeof player.getPlaybackRate === 'function' && Math.abs(player.getPlaybackRate() - rate) < 0.001) return;
+      player.setPlaybackRate(rate);
+    } catch { /* player transitioning */ }
+  }, []);
+
+
+  const ytCaptionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const applyYtCaptions = useCallback((player: any, enabled: boolean) => {
+    if (ytCaptionTimerRef.current) clearTimeout(ytCaptionTimerRef.current);
+    if (!player) return;
+    try {
+      if (!enabled) {
+        player.setOption?.('captions', 'track', {});
+        player.unloadModule?.('captions');
+        return;
+      }
+      player.loadModule?.('captions');
+    } catch { /* ignore */ }
+    // The captions module loads asynchronously — retry until its track list shows up
+    let attempts = 0;
+    const pickTrack = () => {
+      attempts += 1;
+      try {
+        const tracks: any[] = player.getOption?.('captions', 'tracklist') || [];
+        if (tracks.length > 0) {
+          const preferred = tracks.find(t => t.languageCode?.startsWith('en')) || tracks[0];
+          player.setOption('captions', 'track', { languageCode: preferred.languageCode });
+          return;
+        }
+      } catch { /* ignore */ }
+      if (attempts < 8) ytCaptionTimerRef.current = setTimeout(pickTrack, 600);
+      else {
+        try { player.setOption?.('captions', 'track', { languageCode: 'en' }); } catch { /* ignore */ }
+      }
+    };
+    ytCaptionTimerRef.current = setTimeout(pickTrack, 300);
+  }, []);
+  useEffect(() => () => { if (ytCaptionTimerRef.current) clearTimeout(ytCaptionTimerRef.current); }, []);
+
+  // ---- Listener: make sure we're on the SAME SONG as the host ----
+  // Match by video ID, not playlist index. For a single video the player queues a YouTube Mix
+  // (list=RD<id>), and Mixes are personalised per viewer — "song 5" in the host's Mix is a
+  // different video from "song 5" in a peer's Mix. Index is only trusted for real playlists,
+  // and only after checking that index actually holds the host's video in our copy.
+  const pendingTrackRef = useRef<{ id: string; at: number } | null>(null);
+  // Bumped to force a fresh YouTube player (e.g. Sync pressed while the player never became ready)
+  const [playerNonce, setPlayerNonce] = useState(0);
+
+  // ---- Precise listener sync ----
+  // A seek isn't instant: the player buffers for a moment, during which the host keeps playing,
+  // so a naive seek lands behind. We seek slightly AHEAD by a learned "lead", then verify ~2s
+  // later and adjust the lead from the measured error (repeat up to 3x). The learned lead is
+  // remembered per media type, so later corrections are accurate on the first try.
+  // Starting leads measured on a real YouTube embed (~0.1s seek delay); refined per device as it plays
+  const seekLeadRef = useRef<{ direct: number; youtube: number }>({ direct: 0.05, youtube: 0.12 });
+  const lastCorrectionAtRef = useRef(0);
+  const verifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastReanchorAtRef = useRef(0);
+  const isLocallyPausedRef = useRef(isLocallyPaused);
+  isLocallyPausedRef.current = isLocallyPaused;
+  useEffect(() => () => { if (verifyTimerRef.current) clearTimeout(verifyTimerRef.current); }, []);
+
+  /** Where the host is right now (shared clock, loop-aware) */
+  const hostTargetNow = useCallback((): number | null => {
+    const bc = currentBroadcastRef.current;
+    if (!bc) return null;
+    const raw = calculateEffectiveTime(bc);
+    const vidDur = videoRef.current?.duration;
+    const ytDur = ytPlayerRef.current?.getDuration?.();
+    const dur = bc.mediaType === 'direct' ? vidDur : ytDur;
+    return bc.loop && dur && Number.isFinite(dur) && dur > 0 ? raw % dur : raw;
+  }, []);
+
+  const readPlayerTime = useCallback((kind: 'direct' | 'youtube'): number | null => {
+    try {
+      if (kind === 'direct') return videoRef.current ? videoRef.current.currentTime : null;
+      const t = ytPlayerRef.current?.getCurrentTime?.();
+      return typeof t === 'number' && !Number.isNaN(t) ? t : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const listenerSeek = useCallback((kind: 'direct' | 'youtube', attempt = 0) => {
+    const bc = currentBroadcastRef.current;
+    const target = hostTargetNow();
+    if (!bc || target === null) return;
+    const playing = bc.playing && !isLocallyPausedRef.current;
+    const lead = playing ? seekLeadRef.current[kind] : 0;
+    const dest = Math.max(0, target + lead);
+    try {
+      if (kind === 'direct' && videoRef.current) videoRef.current.currentTime = dest;
+      else if (kind === 'youtube') ytPlayerRef.current?.seekTo?.(dest, true);
+    } catch { /* player transitioning */ }
+    lastCorrectionAtRef.current = Date.now();
+    if (!playing) return;
+
+    if (verifyTimerRef.current) clearTimeout(verifyTimerRef.current);
+    verifyTimerRef.current = setTimeout(() => {
+      const bcNow = currentBroadcastRef.current;
+      if (!bcNow || !bcNow.playing || isLocallyPausedRef.current || isDesyncedRef.current) return;
+      const actual = readPlayerTime(kind);
+      const expected = hostTargetNow();
+      if (actual === null || expected === null) return;
+      const error = actual - expected; // + ahead, - behind
+      // Learn: if we landed behind, lead more next time (and vice versa)
+      const learned = seekLeadRef.current[kind] - error * 0.8;
+      seekLeadRef.current[kind] = Math.min(3, Math.max(0, learned));
+      if (Math.abs(error) > 0.3 && attempt < 2) listenerSeek(kind, attempt + 1);
+    }, kind === 'youtube' ? 2200 : 1500);
+  }, [hostTargetNow, readPlayerTime]);
+  const syncToHostTrack = useCallback((yt: any, bc: PeerBroadcast | null, startSeconds: number, shouldPlay: boolean): boolean => {
+    if (!yt || !bc || bc.mediaType !== 'youtube') return false;
+    try {
+      const targetId = bc.videoId;
+      if (targetId) {
+        const curId: string | undefined = yt.getVideoData?.()?.video_id;
+        if (curId === targetId) {
+          pendingTrackRef.current = null;
+          return false;
+        }
+        // A switch to this video is already in flight — don't hammer the player every tick
+        const pending = pendingTrackRef.current;
+        if (pending && pending.id === targetId && Date.now() - pending.at < 5000) return true;
+        pendingTrackRef.current = { id: targetId, at: Date.now() };
+
+        const isStablePlaylist = !!bc.playlistId && !bc.playlistId.startsWith('RD');
+        const queue: string[] | undefined = yt.getPlaylist?.();
+        const idx = bc.playlistIndex;
+        if (isStablePlaylist && queue && idx !== undefined && idx >= 0 && queue[idx] === targetId && typeof yt.playVideoAt === 'function') {
+          // Same position in a shared playlist — keeps next/prev queue intact for this peer
+          yt.playVideoAt(idx);
+        } else if (shouldPlay && typeof yt.loadVideoById === 'function') {
+          yt.loadVideoById({ videoId: targetId, startSeconds: Math.max(0, startSeconds) });
+        } else if (typeof yt.cueVideoById === 'function') {
+          yt.cueVideoById({ videoId: targetId, startSeconds: Math.max(0, startSeconds) });
+        }
+        return true;
+      }
+      // Host hasn't reported a video ID yet (e.g. playlist link without v=) — fall back to index
+      const idx = bc.playlistIndex;
+      if (idx !== undefined && idx >= 0 && typeof yt.getPlaylistIndex === 'function') {
+        const curIdx = yt.getPlaylistIndex();
+        if (curIdx >= 0 && curIdx !== idx && typeof yt.playVideoAt === 'function') {
+          yt.playVideoAt(idx);
+          return true;
+        }
+      }
+    } catch {
+      /* player transitioning */
+    }
+    return false;
+  }, []);
+
+  const isYouTubeBroadcast = currentBroadcast?.mediaType === 'youtube';
+  const youtubeVideoId = !isYouTubeBroadcast ? null
+    : currentBroadcast?.url ? extractYouTubeId(currentBroadcast.url) : (currentBroadcast?.videoId || null);
+  const youtubePlaylistId = !isYouTubeBroadcast ? null
+    : currentBroadcast?.url ? (extractYouTubePlaylistId(currentBroadcast.url) || currentBroadcast?.playlistId || null) : (currentBroadcast?.playlistId || null);
+  const showYouTube = !!(youtubeVideoId || youtubePlaylistId);
 
   // Load YouTube IFrame API script once
   useEffect(() => {
@@ -243,8 +555,8 @@ export function MediaSyncDock({
 
     const initYT = () => {
       if (destroyed || !window.YT || !window.YT.Player) return;
-      const targetEl = document.getElementById(ytContainerId.current);
-      if (!targetEl) return;
+      const host = ytHostRef.current;
+      if (!host) return;
 
       try {
         if (ytPlayerRef.current?.destroy) {
@@ -253,6 +565,11 @@ export function MediaSyncDock({
       } catch {
         // ignore
       }
+      ytPlayerRef.current = null;
+      // Fresh, non-React target for YouTube to replace with its iframe
+      host.replaceChildren();
+      const targetEl = document.createElement('div');
+      host.appendChild(targetEl);
 
       const playerVars: any = {
         autoplay: currentBroadcast?.playing && !isLocallyPaused ? 1 : 0,
@@ -262,9 +579,20 @@ export function MediaSyncDock({
         modestbranding: 1,
         rel: 0,
         origin: window.location.origin,
+        // Captions: start with them on if this peer has CC enabled
+        cc_load_policy: captionsEnabledRef.current ? 1 : 0,
+        cc_lang_pref: 'en',
       };
 
-      if (youtubePlaylistId) {
+      // LISTENERS NEVER GET A PLAYLIST OF THEIR OWN. They load exactly the host's current video
+      // and switch only when the host does (see syncToHostTrack). Otherwise YouTube's personalised
+      // Mix / autoplay would wander off to songs the host never played.
+      const amHost = isHostRef.current;
+      const listenerVideoId = !amHost ? (currentBroadcastRef.current?.videoId || currentBroadcast?.videoId || youtubeVideoId) : null;
+
+      if (listenerVideoId) {
+        // single video, no queue
+      } else if (youtubePlaylistId) {
         playerVars.listType = 'playlist';
         playerVars.list = youtubePlaylistId;
         if (currentBroadcast?.playlistIndex !== undefined && currentBroadcast.playlistIndex >= 0) {
@@ -276,23 +604,22 @@ export function MediaSyncDock({
         playerVars.list = `RD${youtubeVideoId}`;
       }
 
-      ytPlayerRef.current = new window.YT.Player(ytContainerId.current, {
-        videoId: youtubeVideoId || undefined,
+      ytPlayerRef.current = new window.YT.Player(targetEl, {
+        videoId: listenerVideoId || youtubeVideoId || undefined,
         playerVars,
         events: {
           onReady: (event: any) => {
             if (destroyed) return;
             isPlayerReadyRef.current = true;
-            if (currentBroadcast) {
-              if (currentBroadcast.playlistIndex !== undefined && currentBroadcast.playlistIndex >= 0 && typeof event.target.getPlaylistIndex === 'function') {
-                const curIdx = event.target.getPlaylistIndex();
-                if (curIdx !== currentBroadcast.playlistIndex && typeof event.target.playVideoAt === 'function') {
-                  event.target.playVideoAt(currentBroadcast.playlistIndex);
-                }
+            const bcNow = currentBroadcastRef.current || currentBroadcast;
+            if (bcNow) {
+              const effectiveTime = calculateEffectiveTime(bcNow);
+              // Late joiner: jump straight to the host's current song (by video ID)
+              if (!isHostRef.current) {
+                syncToHostTrack(event.target, bcNow, effectiveTime, bcNow.playing && !isLocallyPaused);
               }
-              const effectiveTime = calculateEffectiveTime(currentBroadcast);
               event.target.seekTo(effectiveTime, true);
-              if (currentBroadcast.playing && !isLocallyPaused) {
+              if (bcNow.playing && !isLocallyPaused) {
                 event.target.playVideo();
               } else {
                 event.target.pauseVideo();
@@ -303,9 +630,16 @@ export function MediaSyncDock({
               event.target.unMute();
               event.target.setVolume(volume * 100);
             }
+            applyYtRate(event.target, effectiveRateRef.current);
+            if (captionsEnabledRef.current) applyYtCaptions(event.target, true);
           },
           onStateChange: (event: any) => {
             const bc = currentBroadcastRef.current;
+
+            // A new playlist track can reset speed — re-apply this peer's choice
+            if (event.data === 1) {
+              applyYtRate(event.target, effectiveRateRef.current);
+            }
 
             // Detect playlist track change on host
             if (isHostRef.current && onUpdateTrackRef.current && typeof event.target.getPlaylistIndex === 'function') {
@@ -314,9 +648,10 @@ export function MediaSyncDock({
               const curVideoId = videoData?.video_id || null;
               const curTitle = videoData?.title || null;
 
-              if (curIndex >= 0 && (curIndex !== bc?.playlistIndex || (curVideoId && curVideoId !== bc?.videoId))) {
+              // Video ID is the source of truth; index can be -1 once YouTube leaves the queue
+              if ((curVideoId && curVideoId !== bc?.videoId) || (curIndex >= 0 && curIndex !== bc?.playlistIndex)) {
                 onUpdateTrackRef.current({
-                  playlistIndex: curIndex,
+                  playlistIndex: curIndex >= 0 ? curIndex : bc?.playlistIndex,
                   videoId: curVideoId || undefined,
                   title: curTitle || bc?.title || 'YouTube Track',
                   currentTime: 0,
@@ -358,13 +693,16 @@ export function MediaSyncDock({
       try {
         if (ytPlayerRef.current?.destroy) {
           ytPlayerRef.current.destroy();
-          ytPlayerRef.current = null;
         }
       } catch {
         // ignore
       }
+      ytPlayerRef.current = null;
+      // Remove YouTube's iframe ourselves (React never knew about it)
+      ytHostRef.current?.replaceChildren();
     };
-  }, [youtubeVideoId, youtubePlaylistId, currentBroadcast?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [youtubeVideoId, youtubePlaylistId, currentBroadcast?.id, isHost, playerNonce]);
 
   // Synchronize player immediately on incoming CRDT updates (ZERO LAG SEEKING)
   useEffect(() => {
@@ -387,11 +725,11 @@ export function MediaSyncDock({
       if (vid.ended && !currentBroadcast.loop) {
         // Video ended — don't restart
       } else {
-        if (currentBroadcast.action === 'seek' || isNewAction) {
-          vid.currentTime = effectiveTime;
-        } else {
+        // The host's own player is the source of truth — never pull it toward the computed anchor
+        if (!isHost) {
           const timeDiff = Math.abs(vid.currentTime - effectiveTime);
-          if (timeDiff > 1.2) vid.currentTime = effectiveTime;
+          const explicitJump = isNewAction && (currentBroadcast.action === 'seek' || currentBroadcast.action === 'load');
+          if (explicitJump || (timeDiff > 0.6 && !isDesyncedByChoice)) listenerSeek('direct');
         }
 
         if (currentBroadcast.playing && !isLocallyPaused && vid.paused) {
@@ -408,21 +746,22 @@ export function MediaSyncDock({
         const playerState = yt.getPlayerState?.();
         const curYtTime = yt.getCurrentTime ? yt.getCurrentTime() : 0;
 
-        // Sync playlist track if host changed it
-        if (!isHost && currentBroadcast.playlistIndex !== undefined && typeof yt.getPlaylistIndex === 'function') {
-          const curIndex = yt.getPlaylistIndex();
-          if (curIndex >= 0 && curIndex !== currentBroadcast.playlistIndex && typeof yt.playVideoAt === 'function') {
-            yt.playVideoAt(currentBroadcast.playlistIndex);
-          }
+        // Host changed song → switch this listener to the same video, starting at the host's time.
+        // Skip the seek/play logic below while the new video loads (its times belong to the old one).
+        if (!isHost && syncToHostTrack(yt, currentBroadcast, effectiveTime, currentBroadcast.playing && !isLocallyPaused)) {
+          return;
         }
 
         // Don't force restart if video ended naturally (state 0) and loop is off
         if (playerState === 0 && !currentBroadcast.loop) {
           // Video ended — don't restart
         } else {
-          // If seek action was received from host, jump immediately with allowSeekAhead = true
-          if (currentBroadcast.action === 'seek' || Math.abs(curYtTime - effectiveTime) > 1.5) {
-            yt.seekTo(effectiveTime, true);
+          // Listener: jump on an explicit host seek, or when clearly off (heartbeats land here too)
+          if (!isHost) {
+            const explicitJump = isNewAction && (currentBroadcast.action === 'seek' || currentBroadcast.action === 'load');
+            if (explicitJump || (Math.abs(curYtTime - effectiveTime) > 1.0 && !isDesyncedByChoice)) {
+              listenerSeek('youtube');
+            }
           }
 
           if (currentBroadcast.playing && !isLocallyPaused) {
@@ -435,7 +774,8 @@ export function MediaSyncDock({
         // player transitioning
       }
     }
-  }, [currentBroadcast, isLocallyPaused, duration]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentBroadcast, isLocallyPaused, duration, isDesyncedByChoice, isHost]);
 
   // Continuous Auto-Sync ticker (Keeps peers synchronized without manual intervention)
   useEffect(() => {
@@ -462,10 +802,29 @@ export function MediaSyncDock({
           // Don't force restart if video ended naturally and loop is off
           if (vid.ended && !currentBroadcast.loop) {
             // Video ended — skip forcing play
+          } else if (isHost) {
+            if (vid.paused) vid.play().catch(() => {});
+            // Heartbeat: publish where the host REALLY is if it drifted from the anchor (buffering)
+            if (onReanchor && !vid.paused && vid.readyState >= 3
+                && Math.abs(vid.currentTime - targetTime) > 0.4
+                && Date.now() - lastReanchorAtRef.current > 3000) {
+              lastReanchorAtRef.current = Date.now();
+              onReanchor(vid.currentTime);
+            }
           } else {
             if (vid.paused) vid.play().catch(() => {});
-            if (Math.abs(vid.currentTime - targetTime) > 1.8) {
-              vid.currentTime = targetTime;
+            const diff = vid.currentTime - targetTime; // + ahead, - behind
+            setSyncDrift(diff);
+            if (!isDesyncedByChoice) {
+              if (Math.abs(diff) > 0.6 && Date.now() - lastCorrectionAtRef.current > 3000) {
+                listenerSeek('direct');
+              } else if (Math.abs(diff) > 0.05) {
+                // Small drift: glide back by nudging speed ±8% (inaudible) instead of a jarring seek
+                const nudge = Math.max(-0.08, Math.min(0.08, diff * 0.4));
+                vid.playbackRate = effectiveRateRef.current * (1 - nudge);
+              } else if (Math.abs(vid.playbackRate - effectiveRateRef.current) > 0.001) {
+                vid.playbackRate = effectiveRateRef.current;
+              }
             }
           }
         }
@@ -484,9 +843,9 @@ export function MediaSyncDock({
             const curVideoId = videoData?.video_id || null;
             const curTitle = videoData?.title || null;
 
-            if (curIndex >= 0 && (curIndex !== currentBroadcast.playlistIndex || (curVideoId && curVideoId !== currentBroadcast.videoId))) {
+            if ((curVideoId && curVideoId !== currentBroadcast.videoId) || (curIndex >= 0 && curIndex !== currentBroadcast.playlistIndex)) {
               onUpdateTrack({
-                playlistIndex: curIndex,
+                playlistIndex: curIndex >= 0 ? curIndex : currentBroadcast.playlistIndex,
                 videoId: curVideoId || undefined,
                 title: curTitle || currentBroadcast.title,
                 currentTime: cur || 0,
@@ -494,12 +853,9 @@ export function MediaSyncDock({
             }
           }
 
-          // If Peer (Listener): verify we are playing the host's playlist track
-          if (!isHost && currentBroadcast.playlistIndex !== undefined && typeof yt.getPlaylistIndex === 'function') {
-            const curIndex = yt.getPlaylistIndex();
-            if (curIndex >= 0 && curIndex !== currentBroadcast.playlistIndex && typeof yt.playVideoAt === 'function') {
-              yt.playVideoAt(currentBroadcast.playlistIndex);
-            }
+          // If Peer (Listener): verify we are playing the host's song (by video ID)
+          if (!isHost && syncToHostTrack(yt, currentBroadcast, targetTime, currentBroadcast.playing && !isLocallyPaused)) {
+            return;
           }
 
           // If loop is on, and the video ended or is within 0.5s of the end on host
@@ -520,8 +876,31 @@ export function MediaSyncDock({
                 yt.playVideo();
               }
               const isAtEnd = dur > 0 && (dur - cur < 1.0);
-              if (cur !== undefined && Math.abs(cur - targetTime) > 1.8 && !isAtEnd) {
-                yt.seekTo(targetTime, true);
+              if (isHost) {
+                // Heartbeat: re-anchor to the host's real position after buffering stalls
+                if (onReanchor && playerState === 1 && !isAtEnd && cur !== undefined
+                    && Math.abs(cur - targetTime) > 0.5
+                    && Date.now() - lastReanchorAtRef.current > 3000) {
+                  lastReanchorAtRef.current = Date.now();
+                  onReanchor(cur);
+                }
+              } else if (cur !== undefined && playerState === 1 && !isAtEnd) {
+                const diff = cur - targetTime; // + ahead, - behind
+                setSyncDrift(diff);
+                if (!isDesyncedByChoice) {
+                  const baseRate = effectiveRateRef.current;
+                  let wantRate = baseRate;
+                  if (Math.abs(diff) > 0.8 && Date.now() - lastCorrectionAtRef.current > 4000) {
+                    listenerSeek('youtube');
+                  } else if (Math.abs(diff) > 0.06) {
+                    // Small drift: glide back with a ±8% speed nudge (YouTube accepts fine rates like 1.05)
+                    wantRate = baseRate * (1 - Math.max(-0.08, Math.min(0.08, diff * 0.4)));
+                  }
+                  try {
+                    const curRate = yt.getPlaybackRate?.() ?? baseRate;
+                    if (Math.abs(curRate - wantRate) > 0.01) yt.setPlaybackRate(Math.round(wantRate * 100) / 100);
+                  } catch { /* ignore */ }
+                }
               }
             }
           }
@@ -534,16 +913,19 @@ export function MediaSyncDock({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [currentBroadcast, isLocallyPaused, duration, isHost, onPlayAll, onUpdateTrack]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentBroadcast, isLocallyPaused, duration, isHost, onPlayAll, onUpdateTrack, isDesyncedByChoice, onReanchor]);
 
-  // Volume control
+  // Volume control. While watching someone's screen share, the broadcast player underneath is
+  // silenced so the relayed audio isn't doubled up with (possibly unreachable) YouTube audio.
   useEffect(() => {
+    const underlyingMuted = isMuted || isViewingScreen;
     if (videoRef.current) {
-      videoRef.current.volume = isMuted ? 0 : volume;
+      videoRef.current.volume = underlyingMuted ? 0 : volume;
     }
     if (isPlayerReadyRef.current && ytPlayerRef.current?.setVolume) {
       try {
-        if (isMuted) ytPlayerRef.current.mute();
+        if (underlyingMuted) ytPlayerRef.current.mute();
         else {
           ytPlayerRef.current.unMute();
           ytPlayerRef.current.setVolume(volume * 100);
@@ -552,35 +934,221 @@ export function MediaSyncDock({
         // ignore
       }
     }
-  }, [volume, isMuted]);
+    if (screenVideoRef.current) {
+      screenVideoRef.current.muted = isMuted;
+      screenVideoRef.current.volume = volume;
+    }
+  }, [volume, isMuted, isViewingScreen]);
+
+  // ---- Apply playback speed (local player follows host rate or this peer's override) ----
+  useEffect(() => {
+    if (videoRef.current && Math.abs(videoRef.current.playbackRate - effectiveRate) > 0.001) {
+      videoRef.current.playbackRate = effectiveRate;
+    }
+    if (isPlayerReadyRef.current) applyYtRate(ytPlayerRef.current, effectiveRate);
+  }, [effectiveRate, applyYtRate, currentBroadcast?.id]);
+
+  // Reset local overrides when a different stream is loaded
+  useEffect(() => {
+    setSpeedOverride(null);
+    setPeerSkipped(false);
+    setSyncDrift(null);
+    setIsAudioOnly(false);
+    setMediaError(null);
+  }, [currentBroadcast?.id, currentBroadcast?.url]);
+
+
+  // ---- Apply captions (YouTube module or HTML5 text tracks) ----
+  const applyHtmlCaptions = useCallback(() => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    for (let i = 0; i < vid.textTracks.length; i++) {
+      vid.textTracks[i].mode = captionsEnabledRef.current ? 'showing' : 'disabled';
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentBroadcast?.mediaType === 'youtube' && isPlayerReadyRef.current) {
+      applyYtCaptions(ytPlayerRef.current, captionsEnabled);
+    }
+    applyHtmlCaptions();
+  }, [captionsEnabled, applyYtCaptions, applyHtmlCaptions, currentBroadcast?.mediaType, subtitleSrc]);
+
+  // ---- Attach screen-share streams to their <video> elements ----
+  useEffect(() => {
+    const el = screenVideoRef.current;
+    if (!el) return;
+    if (isViewingScreen && incomingScreenStream) {
+      if (el.srcObject !== incomingScreenStream) el.srcObject = incomingScreenStream;
+      el.muted = isMuted;
+      el.volume = volume;
+      el.play()
+        .then(() => setScreenNeedsClick(false))
+        // Autoplay with sound can be blocked until the user interacts — offer a click-to-play
+        .catch(() => setScreenNeedsClick(true));
+    } else {
+      el.srcObject = null;
+      setScreenNeedsClick(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingScreenStream, isViewingScreen]);
+
+  useEffect(() => {
+    const el = screenPreviewRef.current;
+    if (!el) return;
+    if (isScreenSharing && localScreenStream) {
+      if (el.srcObject !== localScreenStream) el.srcObject = localScreenStream;
+      el.muted = true; // never play your own capture back (echo)
+      el.play().catch(() => { /* preview only */ });
+    } else {
+      el.srcObject = null;
+    }
+  }, [isScreenSharing, localScreenStream, isMinimized]);
+
+  useEffect(() => {
+    if (screenShareError) showToast(screenShareError, 5000);
+  }, [screenShareError, showToast]);
+
+  const handleScreenClickToPlay = useCallback(() => {
+    const el = screenVideoRef.current;
+    if (!el) return;
+    el.muted = isMuted;
+    el.play().then(() => setScreenNeedsClick(false)).catch(() => {
+      // Last resort: start muted so at least the picture shows
+      el.muted = true;
+      el.play().catch(() => {});
+      setScreenNeedsClick(false);
+      showToast('Browser blocked sound — unmute with the volume button');
+    });
+  }, [isMuted, showToast]);
+
+  const handleToggleScreenShare = useCallback(async () => {
+    if (isScreenSharing) {
+      onStopScreenShare?.();
+      return;
+    }
+    if (!onStartScreenShare) return;
+    setIsStartingShare(true);
+    try {
+      const stream = await onStartScreenShare();
+      if (stream) {
+        setIsRelaying(false);
+        showToast('🖥️ Sharing your screen with the room');
+      }
+    } finally {
+      setIsStartingShare(false);
+    }
+  }, [isScreenSharing, onStartScreenShare, onStopScreenShare, showToast]);
+
+  // Host relays exactly what its player shows + plays to every peer (they don't touch YouTube at all)
+  const handleRelayToPeers = useCallback(async () => {
+    if (!onStartScreenShare) return;
+    setIsStartingShare(true);
+    showToast('In the picker choose "This tab" and keep "Share tab audio" ON', 6000);
+    try {
+      const stream = await onStartScreenShare({ preferCurrentTab: true, cropTo: playerAreaRef.current });
+      if (stream) {
+        setIsRelaying(true);
+        showToast('📡 Relaying your player to everyone — peers now see & hear exactly what you play');
+      }
+    } finally {
+      setIsStartingShare(false);
+    }
+  }, [onStartScreenShare, showToast]);
+
+  useEffect(() => {
+    if (!isScreenSharing) setIsRelaying(false);
+  }, [isScreenSharing]);
+
+  // ---- Speed / quality / captions handlers ----
+  const handleSelectSpeed = useCallback((rate: number) => {
+    setSpeedMenuAnchor(null);
+    if (isHost) {
+      onSetPlaybackRate?.(rate);
+      setSpeedOverride(null);
+      showToast(`Speed ${rate}× for everyone`);
+    } else if (Math.abs(rate - hostRate) < 0.001) {
+      setSpeedOverride(null);
+      showToast(`Following host speed (${rate}×)`);
+    } else {
+      setSpeedOverride(rate);
+      showToast(`Speed ${rate}× just for you — auto-sync paused (press Sync to rejoin)`, 3500);
+    }
+  }, [isHost, onSetPlaybackRate, hostRate, showToast]);
+
+
+  const handleToggleCaptions = useCallback(() => {
+    setCaptionsEnabled(prev => {
+      const next = !prev;
+      if (next && isDirectMedia && !subtitleSrc) {
+        showToast(isHost ? 'No subtitles loaded — use "Add subtitles" to attach a .srt/.vtt file' : 'This stream has no subtitle track yet');
+      } else {
+        showToast(next ? 'Captions on' : 'Captions off', 1500);
+      }
+      return next;
+    });
+  }, [isDirectMedia, subtitleSrc, isHost, showToast]);
+
+  // Listener-only skip: moves just this peer's player; Sync to Host brings them back
+  const handlePeerSkip = useCallback((delta: number) => {
+    if (!currentBroadcast || isHost) return;
+    try {
+      if (currentBroadcast.mediaType === 'direct' && videoRef.current) {
+        const vid = videoRef.current;
+        const max = Number.isFinite(vid.duration) ? vid.duration : Number.MAX_SAFE_INTEGER;
+        vid.currentTime = Math.min(max, Math.max(0, vid.currentTime + delta));
+        vid.playbackRate = effectiveRateRef.current;
+        setLocalProgress(vid.currentTime);
+      } else if (ytPlayerRef.current?.seekTo) {
+        const yt = ytPlayerRef.current;
+        const cur = yt.getCurrentTime?.() ?? 0;
+        const dur = yt.getDuration?.() || Number.MAX_SAFE_INTEGER;
+        const next = Math.min(dur, Math.max(0, cur + delta));
+        yt.seekTo(next, true);
+        setLocalProgress(next);
+      }
+    } catch { /* player transitioning */ }
+    if (verifyTimerRef.current) clearTimeout(verifyTimerRef.current);
+    isDesyncedRef.current = true;
+    setPeerSkipped(true);
+    showToast(`${delta > 0 ? '⏩' : '⏪'} ${Math.abs(delta)}s just for you — press Sync to Host to rejoin`, 2600);
+  }, [currentBroadcast, isHost, showToast]);
 
   // Instant Manual Re-sync button
   const handleManualSync = useCallback(() => {
     if (!currentBroadcast) return;
     setIsLocallyPaused(false);
+    setSpeedOverride(null);
+    setPeerSkipped(false);
+    isDesyncedRef.current = false;
     const target = calculateEffectiveTime(currentBroadcast);
     setLocalProgress(target);
 
     if (currentBroadcast.mediaType === 'direct' && videoRef.current) {
-      videoRef.current.currentTime = target;
+      videoRef.current.playbackRate = hostRate;
       if (currentBroadcast.playing) videoRef.current.play().catch(() => {});
       else videoRef.current.pause();
+      isLocallyPausedRef.current = false;
+      listenerSeek('direct'); // seek with learned lead + verify & refine
+    } else if (currentBroadcast.mediaType === 'youtube' && !isPlayerReadyRef.current) {
+      // Player never initialised properly — rebuild it on the host's exact video
+      pendingTrackRef.current = null;
+      setPlayerNonce(n => n + 1);
     } else if (ytPlayerRef.current?.seekTo) {
       const yt = ytPlayerRef.current;
-      // If playlist index differs, jump to the correct song first!
-      if (currentBroadcast.playlistIndex !== undefined && typeof yt.getPlaylistIndex === 'function') {
-        const curIdx = yt.getPlaylistIndex();
-        if (curIdx >= 0 && curIdx !== currentBroadcast.playlistIndex && typeof yt.playVideoAt === 'function') {
-          yt.playVideoAt(currentBroadcast.playlistIndex);
-        }
+      // Wrong song? Load the host's exact video at the host's time (forces a fresh attempt)
+      pendingTrackRef.current = null;
+      const switching = !isHost && syncToHostTrack(yt, currentBroadcast, target, currentBroadcast.playing);
+      if (!switching) {
+        if (currentBroadcast.playing) yt.playVideo();
+        else yt.pauseVideo();
+        isLocallyPausedRef.current = false;
+        listenerSeek('youtube'); // seek with learned lead + verify & refine
       }
-      yt.seekTo(target, true);
-      if (currentBroadcast.playing) yt.playVideo();
-      else yt.pauseVideo();
     }
     setSyncNotice(`Synced with ${currentBroadcast.hostName}!`);
     setTimeout(() => setSyncNotice(null), 2000);
-  }, [currentBroadcast]);
+  }, [currentBroadcast, isHost, syncToHostTrack, listenerSeek, hostRate]);
 
   // Play / Pause handler
   const handleTogglePlay = useCallback(() => {
@@ -641,6 +1209,61 @@ export function MediaSyncDock({
     setUrlInput('');
   };
 
+  // ---- Feature 1: pick a local audio/video file → upload to the LAN media server → broadcast ----
+  const handleFileSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow picking the same file again later
+    if (!file) return;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      showToast('File is larger than 500 MB — pick a smaller file', 4000);
+      return;
+    }
+    setIsUploading(true);
+    setUploadProgress(0);
+    setUploadLabel(file.name);
+    try {
+      const data = await uploadToMediaServer(file, file.name, setUploadProgress);
+      setIsLocallyPaused(false);
+      const title = file.name.replace(/\.[^.]+$/, '');
+      onStartBroadcast(data.path, title);
+      showToast(`📁 Streaming "${title}" to everyone on the network`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Upload failed', 5000);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  }, [onStartBroadcast, showToast]);
+
+  // Host attaches a subtitle file (.srt is converted to .vtt in the browser) to the current upload
+  const handleSubtitleSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !onSetSubtitleUrl) return;
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith('.srt') && !lower.endsWith('.vtt')) {
+      showToast('Subtitles must be a .srt or .vtt file', 3500);
+      return;
+    }
+    try {
+      setIsUploading(true);
+      setUploadLabel(file.name);
+      const text = await file.text();
+      const vtt = lower.endsWith('.srt') ? srtToVtt(text) : text;
+      const blob = new Blob([vtt], { type: 'text/vtt' });
+      const name = file.name.replace(/\.[^.]+$/, '') + '.vtt';
+      const data = await uploadToMediaServer(blob, name, setUploadProgress);
+      onSetSubtitleUrl(data.path);
+      setCaptionsEnabled(true);
+      showToast('💬 Subtitles added for everyone (each peer can toggle CC)');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Subtitle upload failed', 5000);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  }, [onSetSubtitleUrl, showToast]);
+
   // Close handler: if host, stop broadcast first so all peers lose it
   const handleClose = useCallback(() => {
     if (isHost) {
@@ -674,6 +1297,106 @@ export function MediaSyncDock({
       }
     }
   }, [currentBroadcast, isLocallyPaused]);
+
+  // ---- Feature 3: keyboard shortcuts ----
+  // Track whether the user is "in" the dock: hovering it, or their last click was inside it.
+  // Shortcuts only fire then (or in wide/full screen), so Space-to-pan and arrow-key nudging on
+  // the canvas keep working the rest of the time.
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent) => {
+      dockFocusRef.current = !!dockContainerRef.current?.contains(e.target as Node);
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    return () => window.removeEventListener('pointerdown', onPointerDown, true);
+  }, []);
+
+  const shortcutStateRef = useRef({
+    isHost,
+    hasBroadcast: !!currentBroadcast,
+    screenActive,
+    isImmersive,
+    localProgress,
+    duration,
+    handleTogglePlay,
+    handleLocalToggle,
+    handleSeekCommit,
+    handlePeerSkip,
+    showToast,
+  });
+  shortcutStateRef.current = {
+    isHost,
+    hasBroadcast: !!currentBroadcast,
+    screenActive,
+    isImmersive,
+    localProgress,
+    duration,
+    handleTogglePlay,
+    handleLocalToggle,
+    handleSeekCommit,
+    handlePeerSkip,
+    showToast,
+  };
+
+  useEffect(() => {
+    const SHORTCUT_CODES = new Set(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+
+    const shouldHandle = (e: KeyboardEvent) => {
+      if (!SHORTCUT_CODES.has(e.code)) return false;
+      if (e.ctrlKey || e.metaKey || e.altKey) return false;
+      if (isTypingTarget(e.target)) return false; // never steal keys while typing
+      const st = shortcutStateRef.current;
+      if (!st.hasBroadcast && !st.screenActive) return false;
+      return st.isImmersive || dockHoverRef.current || dockFocusRef.current;
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!shouldHandle(e)) return;
+      const st = shortcutStateRef.current;
+      // Capture phase + stopPropagation keeps the canvas from also panning / nudging shapes
+      e.preventDefault();
+      e.stopPropagation();
+
+      switch (e.code) {
+        case 'Space':
+          if (e.repeat || !st.hasBroadcast) return;
+          if (st.isHost) st.handleTogglePlay();
+          else st.handleLocalToggle();
+          break;
+        case 'ArrowUp':
+          setVolume(prev => Math.min(1, Math.round((prev + 0.1) * 10) / 10));
+          setIsMuted(false);
+          break;
+        case 'ArrowDown':
+          setVolume(prev => Math.max(0, Math.round((prev - 0.1) * 10) / 10));
+          break;
+        case 'ArrowLeft':
+        case 'ArrowRight': {
+          if (!st.hasBroadcast) return;
+          if (!st.isHost) {
+            st.handlePeerSkip(e.code === 'ArrowLeft' ? -10 : 10);
+            return;
+          }
+          const delta = e.code === 'ArrowLeft' ? -10 : 10;
+          const max = st.duration > 0 ? st.duration : Number.MAX_SAFE_INTEGER;
+          st.handleSeekCommit(null, Math.min(max, Math.max(0, st.localProgress + delta)));
+          break;
+        }
+      }
+    };
+
+    // Stop Space's keyup from "clicking" whichever dock button still has focus
+    const handleKeyUp = (e: KeyboardEvent) => {
+      // (no stopPropagation — the canvas must still see keyup to release its Space-pan state)
+      if (e.code === 'Space' && shouldHandle(e)) e.preventDefault();
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('keyup', handleKeyUp, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('keyup', handleKeyUp, true);
+    };
+  }, []);
 
   // Dragging event handlers for the minimized floating dock
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
@@ -769,9 +1492,170 @@ export function MediaSyncDock({
 
   const otherBroadcasts = broadcasts.filter(b => b.hostName !== currentBroadcast?.hostName);
 
+  // ---- RENDER: CC / Speed / Subtitles buttons (shared by dock + overlay) ----
+  // Tooltips/menus portal to <body>, which is hidden behind the fullscreen element — so the
+  // overlay uses plain title attributes and the menus mount inside the dock container.
+  const renderMediaExtras = (variant: 'dock' | 'overlay') => {
+    if (!currentBroadcast) return null;
+    const isOverlay = variant === 'overlay';
+    const iconSize = isOverlay ? 19 : 16;
+    const baseColor = isOverlay ? '#cbd5e1' : '#94a3b8';
+    const btnSx = (active: boolean, activeColor = '#c084fc') => ({
+      p: 0.5,
+      borderRadius: 1.5,
+      color: active ? activeColor : baseColor,
+      bgcolor: active ? 'rgba(168,85,247,0.2)' : 'transparent',
+      border: active ? '1px solid rgba(168,85,247,0.4)' : '1px solid transparent',
+      '&:hover': { color: '#f8fafc', bgcolor: 'rgba(168,85,247,0.15)' },
+    });
+    const speedLabel = `${effectiveRate}×`;
+
+    return (
+      <>
+        <IconButton
+          size="small"
+          onClick={handleToggleCaptions}
+          title={captionsEnabled ? 'Captions: ON (just for you)' : 'Captions: OFF'}
+          aria-pressed={captionsEnabled}
+          sx={btnSx(captionsEnabled)}
+        >
+          {captionsEnabled ? <ClosedCaption sx={{ fontSize: iconSize }} /> : <ClosedCaptionDisabled sx={{ fontSize: iconSize }} />}
+        </IconButton>
+
+        {isHost && isDirectMedia && isServerMedia && onSetSubtitleUrl && (
+          <IconButton
+            size="small"
+            onClick={() => subtitleInputRef.current?.click()}
+            disabled={isUploading}
+            title={currentBroadcast.subtitleUrl ? 'Replace subtitles (.srt / .vtt)' : 'Add subtitles (.srt / .vtt)'}
+            sx={btnSx(!!currentBroadcast.subtitleUrl, '#4ade80')}
+          >
+            <Subtitles sx={{ fontSize: iconSize }} />
+          </IconButton>
+        )}
+
+        <Button
+          size="small"
+          onClick={(e) => setSpeedMenuAnchor(e.currentTarget)}
+          title={isHost ? 'Playback speed (for everyone)' : isDesyncedByChoice ? 'Your own speed — press Sync to follow the host again' : 'Playback speed'}
+          startIcon={<Speed sx={{ fontSize: `${iconSize - 2}px !important` }} />}
+          sx={{
+            ...btnSx(effectiveRate !== 1, isDesyncedByChoice ? '#fbbf24' : '#c084fc'),
+            minWidth: 0,
+            px: 0.75,
+            py: 0.25,
+            fontSize: isOverlay ? 11 : 10,
+            fontWeight: 700,
+            textTransform: 'none',
+            '& .MuiButton-startIcon': { mr: 0.4 },
+          }}
+        >
+          {speedLabel}
+        </Button>
+
+      </>
+    );
+  };
+
+  const renderMenus = () => (
+    <>
+      <Menu
+        anchorEl={speedMenuAnchor}
+        open={!!speedMenuAnchor}
+        onClose={() => setSpeedMenuAnchor(null)}
+        container={dockContainerRef.current}
+        disableScrollLock
+        slotProps={{ paper: { sx: { bgcolor: '#111827', color: '#f8fafc', border: '1px solid rgba(168,85,247,0.3)', minWidth: 150 } } }}
+      >
+        <Box sx={{ px: 2, py: 0.5, fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+          {isHost ? 'Speed for everyone' : 'Speed (just you)'}
+        </Box>
+        {PLAYBACK_SPEEDS.map(rate => {
+          const selected = Math.abs(rate - effectiveRate) < 0.001;
+          return (
+            <MenuItem key={rate} dense selected={selected} onClick={() => handleSelectSpeed(rate)}>
+              <ListItemIcon sx={{ minWidth: 26, color: '#c084fc' }}>
+                {selected ? <Check sx={{ fontSize: 16 }} /> : null}
+              </ListItemIcon>
+              <ListItemText
+                primary={rate === 1 ? 'Normal (1×)' : `${rate}×`}
+                secondary={!isHost && Math.abs(rate - hostRate) < 0.001 ? 'Host speed' : undefined}
+                slotProps={{
+                  primary: { sx: { fontSize: 12 } },
+                  secondary: { sx: { fontSize: 9, color: '#a855f7' } },
+                }}
+              />
+            </MenuItem>
+          );
+        })}
+      </Menu>
+    </>
+  );
+
+  // ---- RENDER: overlay for wide/full screen when only a screen share is showing ----
+  const renderScreenOverlay = () => (
+    <Box
+      sx={{
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        zIndex: 30,
+        background: 'linear-gradient(0deg, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.5) 60%, transparent 100%)',
+        opacity: showOverlayControls ? 1 : 0,
+        transition: 'opacity 0.35s ease',
+        pointerEvents: showOverlayControls ? 'auto' : 'none',
+        px: { xs: 2, sm: 4 },
+        pt: 6,
+        pb: 2.5,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}
+      onMouseMove={resetOverlayTimer}
+    >
+      <Typography sx={{ fontSize: 14, fontWeight: 700, color: '#f8fafc' }}>
+        🖥️ {isScreenSharing ? 'You are sharing your screen' : `${screenShareHostName || 'A peer'} is sharing their screen`}
+      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        {isViewingScreen && (
+          <>
+            <IconButton size="small" onClick={() => setIsMuted(!isMuted)} sx={{ color: isMuted ? '#ef4444' : '#cbd5e1' }}>
+              {isMuted || volume === 0 ? <VolumeOff sx={{ fontSize: 18 }} /> : <VolumeUp sx={{ fontSize: 18 }} />}
+            </IconButton>
+            <Slider
+              size="small"
+              min={0}
+              max={1}
+              step={0.05}
+              value={isMuted ? 0 : volume}
+              onChange={(_, val) => {
+                const nextVal = typeof val === 'number' ? val : val[0];
+                setVolume(nextVal);
+                if (isMuted && nextVal > 0) setIsMuted(false);
+              }}
+              sx={{ width: 90, color: '#a855f7', height: 3, '& .MuiSlider-thumb': { width: 10, height: 10 } }}
+            />
+          </>
+        )}
+        <IconButton
+          size="small"
+          onClick={() => { setIsFullScreen(false); setIsWideScreen(false); }}
+          title="Exit (Esc)"
+          sx={{ color: '#cbd5e1', '&:hover': { color: '#f8fafc' } }}
+        >
+          <FullscreenExit sx={{ fontSize: 20 }} />
+        </IconButton>
+      </Box>
+    </Box>
+  );
+
   // ---- RENDER: OVERLAY CONTROLS (used in wide/full screen modes) ----
   const renderOverlayControls = () => {
-    if (!currentBroadcast || !isImmersive) return null;
+    if (!isImmersive) return null;
+    // Watching someone's screen takes over the player, so show the screen-share overlay then
+    if (isViewingScreen || (!currentBroadcast && screenActive)) return renderScreenOverlay();
+    if (!currentBroadcast) return null;
 
     return (
       <Box
@@ -927,20 +1811,38 @@ export function MediaSyncDock({
             )}
 
             {!isHost && (
-              <Tooltip title="Re-sync to host">
+              <>
+                <IconButton
+                  size="small"
+                  onClick={() => handlePeerSkip(-10)}
+                  title="Back 10s (just you)"
+                  sx={{ color: '#cbd5e1', p: 0.5, '&:hover': { color: '#f8fafc' } }}
+                >
+                  <FastRewind sx={{ fontSize: 20 }} />
+                </IconButton>
                 <IconButton
                   size="small"
                   onClick={handleManualSync}
-                  sx={{ color: '#c084fc', p: 0.5, '&:hover': { color: '#e879f9', bgcolor: 'rgba(168,85,247,0.2)' } }}
+                  title="Sync to host"
+                  sx={{ color: peerSkipped ? '#fbbf24' : '#c084fc', p: 0.5, '&:hover': { color: '#e879f9', bgcolor: 'rgba(168,85,247,0.2)' } }}
                 >
                   <SyncIcon sx={{ fontSize: 20 }} />
                 </IconButton>
-              </Tooltip>
+                <IconButton
+                  size="small"
+                  onClick={() => handlePeerSkip(10)}
+                  title="Forward 10s (just you)"
+                  sx={{ color: '#cbd5e1', p: 0.5, '&:hover': { color: '#f8fafc' } }}
+                >
+                  <FastForward sx={{ fontSize: 20 }} />
+                </IconButton>
+              </>
             )}
           </Box>
 
-          {/* Right: Loop, AutoPlay, View mode toggles */}
+          {/* Right: CC, Speed, Loop, AutoPlay, View mode toggles */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 120, justifyContent: 'flex-end' }}>
+            {renderMediaExtras('overlay')}
             {isHost && (
               <IconButton
                 size="small"
@@ -1011,11 +1913,30 @@ export function MediaSyncDock({
         transition: isImmersive ? 'none' : 'width 0.25s ease, height 0.25s ease',
         cursor: isImmersive && !showOverlayControls ? 'none' : 'auto',
       }}
+      onMouseEnter={() => { dockHoverRef.current = true; }}
+      onMouseLeave={() => { dockHoverRef.current = false; }}
     >
+      {/* Hidden pickers for local media + subtitle files */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept="audio/*,video/*,.mkv,.mp3,.mp4,.webm,.m4a,.flac,.ogg,.wav,.opus,.mov"
+        style={{ display: 'none' }}
+        onChange={handleFileSelected}
+      />
+      <input
+        type="file"
+        ref={subtitleInputRef}
+        accept=".srt,.vtt,text/vtt"
+        style={{ display: 'none' }}
+        onChange={handleSubtitleSelected}
+      />
+
       {/* 
         CRITICAL: Video / YouTube player elements stay PERMANENTLY mounted in DOM so audio never stops when minimized!
       */}
       <Box
+        ref={playerAreaRef}
         sx={{
           position: isMinimized ? 'fixed' : 'relative',
           top: isMinimized ? -9999 : 0,
@@ -1025,7 +1946,7 @@ export function MediaSyncDock({
             ? 1
             : isImmersive
             ? '100%'
-            : (currentBroadcast ? 165 : 0),
+            : (currentBroadcast || screenActive ? 165 : 0),
           flex: isImmersive ? 1 : undefined,
           opacity: isMinimized ? 0 : 1,
           pointerEvents: isMinimized ? 'none' : 'auto',
@@ -1038,25 +1959,46 @@ export function MediaSyncDock({
           transition: isImmersive ? 'none' : 'height 0.25s ease',
         }}
       >
-        {youtubeVideoId || youtubePlaylistId ? (
-          <Box
-            id={ytContainerId.current}
-            sx={{
-              width: '100%',
-              height: '100%',
-              pointerEvents: 'none',
-              '& iframe': {
-                width: '100% !important',
-                height: '100% !important',
-              },
-            }}
-          />
-        ) : currentBroadcast?.mediaType === 'direct' ? (
+        {/* Always mounted; only shown for YouTube broadcasts (see ytHostRef note) */}
+        <Box
+          ref={ytHostRef}
+          sx={{
+            width: '100%',
+            height: '100%',
+            pointerEvents: 'none',
+            display: showYouTube ? 'block' : 'none',
+            '& iframe': {
+              width: '100% !important',
+              height: '100% !important',
+            },
+          }}
+        />
+        {!showYouTube && currentBroadcast?.mediaType === 'direct' ? (
           <video
+            key={directSrc}
             ref={videoRef}
-            src={currentBroadcast.url}
+            src={directSrc}
+            // Needed for <track> subtitles from the media server (different port = different origin).
+            // Only for our own server: arbitrary internet URLs usually don't send CORS headers.
+            crossOrigin={isServerMedia ? 'anonymous' : undefined}
+            preload="auto"
             style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             playsInline
+            onLoadedMetadata={(e) => {
+              const vid = e.currentTarget;
+              if (vid.duration && Number.isFinite(vid.duration)) setDuration(vid.duration);
+              setIsAudioOnly(vid.videoWidth === 0);
+              setMediaError(null);
+              vid.playbackRate = effectiveRateRef.current;
+              applyHtmlCaptions();
+            }}
+            onError={() => {
+              setMediaError(
+                isServerMedia
+                  ? 'Could not load this file from the media server. It may have been cleaned up, or this format (e.g. some MKV codecs) is not playable in your browser.'
+                  : 'Could not load this media URL.'
+              );
+            }}
             onEnded={() => {
               if (currentBroadcast?.loop) {
                 if (videoRef.current) {
@@ -1071,8 +2013,179 @@ export function MediaSyncDock({
                 onPauseAll(0);
               }
             }}
-          />
+          >
+            {subtitleSrc && (
+              <track key={subtitleSrc} kind="subtitles" src={subtitleSrc} srcLang="en" label="Subtitles" onLoad={applyHtmlCaptions} />
+            )}
+          </video>
         ) : null}
+
+        {/* Audio-only upload (mp3, flac, …): show artwork instead of a black box */}
+        {isDirectMedia && isAudioOnly && !mediaError && !isViewingScreen && (
+          <Box
+            sx={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 1,
+              pointerEvents: 'none',
+              background: 'radial-gradient(circle at 50% 40%, rgba(168,85,247,0.35) 0%, rgba(15,20,32,1) 70%)',
+            }}
+          >
+            <MusicNote
+              sx={{
+                fontSize: isImmersive ? 120 : 54,
+                color: '#c084fc',
+                animation: currentBroadcast?.playing && !isLocallyPaused ? 'mediaPulse 1.6s ease-in-out infinite' : 'none',
+                '@keyframes mediaPulse': {
+                  '0%, 100%': { transform: 'scale(1)', opacity: 0.85 },
+                  '50%': { transform: 'scale(1.08)', opacity: 1 },
+                },
+              }}
+            />
+            <Typography sx={{ fontSize: isImmersive ? 18 : 11, color: '#e9d5ff', fontWeight: 600, px: 2, textAlign: 'center' }}>
+              {currentBroadcast?.title}
+            </Typography>
+          </Box>
+        )}
+
+        {mediaError && !isViewingScreen && (
+          <Box
+            sx={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              p: 2,
+              bgcolor: 'rgba(15,20,32,0.92)',
+            }}
+          >
+            <Typography sx={{ fontSize: 11, color: '#fca5a5', textAlign: 'center' }}>{mediaError}</Typography>
+          </Box>
+        )}
+
+        {/* Feature 2: incoming screen share takes over the player (kept mounted for a stable ref) */}
+        <video
+          ref={screenVideoRef}
+          autoPlay
+          playsInline
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+            background: '#000',
+            display: isViewingScreen ? 'block' : 'none',
+            zIndex: 5,
+          }}
+        />
+        {isViewingScreen && (
+          <Box
+            sx={{
+              position: 'absolute',
+              top: 8,
+              left: 8,
+              zIndex: 6,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.5,
+              px: 1,
+              py: 0.25,
+              borderRadius: 1,
+              bgcolor: 'rgba(0,0,0,0.6)',
+              color: '#f8fafc',
+              fontSize: 10,
+              fontWeight: 700,
+              pointerEvents: 'none',
+            }}
+          >
+            <FiberManualRecord sx={{ fontSize: 10, color: '#ef4444' }} />
+            LIVE · {screenShareHostName || 'Peer'}'s screen
+          </Box>
+        )}
+        {isViewingScreen && screenNeedsClick && (
+          <Box
+            onClick={handleScreenClickToPlay}
+            sx={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 7,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              bgcolor: 'rgba(0,0,0,0.55)',
+              cursor: 'pointer',
+            }}
+          >
+            <Button variant="contained" startIcon={<PlayArrow />} sx={{ textTransform: 'none', fontWeight: 700, bgcolor: '#a855f7' }}>
+              Click to watch & listen
+            </Button>
+          </Box>
+        )}
+
+        {/* Sharer's own small preview (muted) — corner only, so it never hides what's being shared */}
+        <video
+          ref={screenPreviewRef}
+          autoPlay
+          playsInline
+          muted
+          style={{
+            position: 'absolute',
+            right: 8,
+            top: 8,
+            width: isImmersive ? 240 : 110,
+            aspectRatio: '16 / 9',
+            objectFit: 'cover',
+            borderRadius: 6,
+            border: '2px solid #ef4444',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.6)',
+            background: '#000',
+            display: isScreenSharing && !isMinimized && !isRelaying ? 'block' : 'none',
+            zIndex: 6,
+            pointerEvents: 'none',
+          }}
+        />
+        {isRelaying && !isMinimized && (
+          <Box
+            sx={{
+              position: 'absolute',
+              top: 8,
+              left: 8,
+              zIndex: 6,
+              px: 1,
+              py: 0.25,
+              borderRadius: 1,
+              bgcolor: 'rgba(220,38,38,0.85)',
+              color: '#fff',
+              fontSize: 10,
+              fontWeight: 700,
+              pointerEvents: 'none',
+            }}
+          >
+            📡 RELAYING TO PEERS
+          </Box>
+        )}
+        {isScreenSharing && !currentBroadcast && !isMinimized && (
+          <Box
+            sx={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#fca5a5',
+              fontSize: 12,
+              fontWeight: 700,
+            }}
+          >
+            🔴 You are live — peers see your shared screen
+          </Box>
+        )}
 
         {/* IMMERSIVE OVERLAY CONTROLS (auto-hide on inactivity) */}
         {renderOverlayControls()}
@@ -1182,11 +2295,11 @@ export function MediaSyncDock({
         <Box
           sx={{
             width: '100%',
-            borderRadius: currentBroadcast ? '0 0 16px 16px' : '16px',
+            borderRadius: currentBroadcast || screenActive ? '0 0 16px 16px' : '16px',
             background: 'rgba(15, 20, 32, 0.95)',
             backdropFilter: 'blur(24px)',
             border: '1px solid rgba(168, 85, 247, 0.22)',
-            borderTop: currentBroadcast ? 'none' : '1px solid rgba(168, 85, 247, 0.22)',
+            borderTop: currentBroadcast || screenActive ? 'none' : '1px solid rgba(168, 85, 247, 0.22)',
             boxShadow: '0 24px 60px rgba(0, 0, 0, 0.75), 0 0 30px rgba(168, 85, 247, 0.14)',
             display: 'flex',
             flexDirection: 'column',
@@ -1533,7 +2646,16 @@ export function MediaSyncDock({
                   </>
                 ) : (
                   // Listener Playback Bar
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 0.25 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.25 }}>
+                    <Tooltip title="Back 10s (just you — Sync to Host rejoins)">
+                      <IconButton
+                        size="small"
+                        onClick={() => handlePeerSkip(-10)}
+                        sx={{ color: '#94a3b8', p: 0.6, '&:hover': { color: '#f8fafc' } }}
+                      >
+                        <FastRewind sx={{ fontSize: 19 }} />
+                      </IconButton>
+                    </Tooltip>
                     <Tooltip title="Re-sync audio to host in real-time">
                       <Button
                         size="small"
@@ -1576,6 +2698,15 @@ export function MediaSyncDock({
                       >
                         {isLocallyPaused ? 'Resume (Me)' : 'Pause (Me)'}
                       </Button>
+                    </Tooltip>
+                    <Tooltip title="Forward 10s (just you — Sync to Host rejoins)">
+                      <IconButton
+                        size="small"
+                        onClick={() => handlePeerSkip(10)}
+                        sx={{ color: '#94a3b8', p: 0.6, '&:hover': { color: '#f8fafc' } }}
+                      >
+                        <FastForward sx={{ fontSize: 19 }} />
+                      </IconButton>
                     </Tooltip>
                   </Box>
                 )}
@@ -1633,6 +2764,36 @@ export function MediaSyncDock({
                         border: '1px solid rgba(168,85,247,0.2)',
                       }}
                     />
+                  )}
+                  {/* Live drift readout: how far this peer is from the host */}
+                  {!isHost && currentBroadcast.playing && !isLocallyPaused && (
+                    <Tooltip title={
+                      isDesyncedByChoice
+                        ? 'You moved away on purpose — press Sync to Host to rejoin'
+                        : 'Offset from the host (+ ahead / − behind). Green = in sync.'
+                    }>
+                      <Chip
+                        size="small"
+                        label={
+                          isDesyncedByChoice
+                            ? 'Own position'
+                            : syncDrift === null
+                            ? 'Δ …'
+                            : `Δ ${syncDrift >= 0 ? '+' : '−'}${Math.abs(syncDrift).toFixed(2)}s`
+                        }
+                        sx={{
+                          height: 20,
+                          fontSize: 9,
+                          fontWeight: 700,
+                          fontVariantNumeric: 'tabular-nums',
+                          bgcolor: 'rgba(255,255,255,0.04)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          color: isDesyncedByChoice || syncDrift === null
+                            ? '#fbbf24'
+                            : Math.abs(syncDrift) < 0.15 ? '#4ade80' : Math.abs(syncDrift) < 0.5 ? '#fbbf24' : '#f87171',
+                        }}
+                      />
+                    </Tooltip>
                   )}
                 </Box>
 
@@ -1722,6 +2883,42 @@ export function MediaSyncDock({
                 </Box>
               </Box>
             </Box>
+          ) : screenActive ? (
+            // Screen share only (no synced media broadcast)
+            <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography sx={{ fontSize: 12, color: '#f8fafc', fontWeight: 700 }}>
+                  {isScreenSharing ? '🔴 You are sharing your screen' : `🖥️ ${screenShareHostName || 'A peer'} is sharing`}
+                </Typography>
+                <Typography sx={{ fontSize: 10, color: '#94a3b8' }}>
+                  {isScreenSharing ? 'Video + audio relayed peer-to-peer over the local network' : 'Live over the local network — no internet needed'}
+                </Typography>
+              </Box>
+              {isViewingScreen && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <IconButton
+                    size="small"
+                    onClick={() => setIsMuted(!isMuted)}
+                    sx={{ color: isMuted ? '#ef4444' : '#94a3b8', p: 0.25 }}
+                  >
+                    {isMuted || volume === 0 ? <VolumeOff sx={{ fontSize: 15 }} /> : <VolumeUp sx={{ fontSize: 15 }} />}
+                  </IconButton>
+                  <Slider
+                    size="small"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={isMuted ? 0 : volume}
+                    onChange={(_, val) => {
+                      const nextVal = typeof val === 'number' ? val : val[0];
+                      setVolume(nextVal);
+                      if (isMuted && nextVal > 0) setIsMuted(false);
+                    }}
+                    sx={{ width: 60, color: '#a855f7', height: 3, '& .MuiSlider-thumb': { width: 8, height: 8 } }}
+                  />
+                </Box>
+              )}
+            </Box>
           ) : (
             // No stream playing state
             <Box sx={{ p: 2, textAlign: 'center' }}>
@@ -1729,10 +2926,127 @@ export function MediaSyncDock({
                 No active stream in room
               </Typography>
               <Typography sx={{ fontSize: 10, color: '#64748b' }}>
-                Paste a YouTube video or playlist link below to start broadcasting!
+                Paste a YouTube link, pick a local music/video file, or share your screen — local files and screen share work without internet.
               </Typography>
             </Box>
           )}
+
+          {/* TOOLS ROW: captions / speed / quality (per-peer) + screen share */}
+          <Box
+            sx={{
+              px: 2,
+              py: 0.75,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 1,
+              borderTop: '1px solid rgba(255,255,255,0.05)',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+              {renderMediaExtras('dock')}
+              <Tooltip
+                open={showShortcutHelp}
+                onOpen={() => setShowShortcutHelp(true)}
+                onClose={() => setShowShortcutHelp(false)}
+                title={
+                  <Box sx={{ fontSize: 11, lineHeight: 1.6 }}>
+                    <b>Shortcuts</b> (hover or click the dock first)<br />
+                    Space — play / pause<br />
+                    ↑ / ↓ — volume ±10%<br />
+                    ← / → — skip ∓10s (host: everyone · peer: just you)<br />
+                    Esc — exit wide / full screen
+                  </Box>
+                }
+              >
+                <IconButton size="small" sx={{ p: 0.5, color: '#64748b', '&:hover': { color: '#f8fafc' } }}>
+                  <Keyboard sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Tooltip>
+            </Box>
+
+            <Box sx={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+            {onStartScreenShare && !isScreenSharing && isHost && currentBroadcast?.mediaType === 'youtube' && (
+              <Tooltip title="Stream exactly what your player shows & plays to every peer over the local network — peers don't need YouTube or internet">
+                <span>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={handleRelayToPeers}
+                    disabled={isStartingShare}
+                    sx={{
+                      px: 1.25,
+                      py: 0.35,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      textTransform: 'none',
+                      borderRadius: 1.75,
+                      whiteSpace: 'nowrap',
+                      background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
+                      mr: 0.5,
+                    }}
+                  >
+                    📡 Relay to peers
+                  </Button>
+                </span>
+              </Tooltip>
+            )}
+            {onStartScreenShare && (
+              isScreenSharing ? (
+                <Button
+                  size="small"
+                  variant="contained"
+                  onClick={handleToggleScreenShare}
+                  startIcon={<StopScreenShare sx={{ fontSize: 15 }} />}
+                  sx={{
+                    px: 1.25,
+                    py: 0.35,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    borderRadius: 1.75,
+                    whiteSpace: 'nowrap',
+                    bgcolor: '#dc2626',
+                    animation: 'stopSharePulse 1.6s ease-in-out infinite',
+                    '@keyframes stopSharePulse': {
+                      '0%, 100%': { boxShadow: '0 0 0 0 rgba(239,68,68,0.6)' },
+                      '50%': { boxShadow: '0 0 0 6px rgba(239,68,68,0)' },
+                    },
+                    '&:hover': { bgcolor: '#b91c1c' },
+                  }}
+                >
+                  {isRelaying ? 'Stop Relay' : 'Stop Sharing'}
+                </Button>
+              ) : (
+                <Tooltip title={isViewingScreen ? `${screenShareHostName || 'A peer'} is already sharing — starting yours replaces it` : 'Share a tab/screen with audio (YouTube, Spotify, anything) to everyone on the network'}>
+                  <span>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={handleToggleScreenShare}
+                      disabled={isStartingShare}
+                      startIcon={isStartingShare ? <CircularProgress size={12} sx={{ color: '#c084fc' }} /> : <ScreenShare sx={{ fontSize: 15 }} />}
+                      sx={{
+                        px: 1.25,
+                        py: 0.35,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textTransform: 'none',
+                        borderRadius: 1.75,
+                        whiteSpace: 'nowrap',
+                        color: '#c084fc',
+                        borderColor: 'rgba(168,85,247,0.4)',
+                        '&:hover': { borderColor: '#c084fc', bgcolor: 'rgba(168,85,247,0.12)' },
+                      }}
+                    >
+                      {isHost && currentBroadcast?.mediaType === 'youtube' ? 'Screen' : '🖥️ Share Screen'}
+                    </Button>
+                  </span>
+                </Tooltip>
+              )
+            )}
+            </Box>
+          </Box>
 
           {/* CLEAN UNCLUTTERED URL BROADCAST INPUT (No default songs) */}
           <Box sx={{ px: 2, pb: 2, pt: 0.5, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
@@ -1758,7 +3072,7 @@ export function MediaSyncDock({
                   <LinkIcon sx={{ fontSize: 14, color: '#94a3b8' }} />
                   <input
                     type="text"
-                    placeholder="Paste YouTube or playlist link…"
+                    placeholder="Paste YouTube / media link…"
                     value={urlInput}
                     onChange={e => setUrlInput(e.target.value)}
                     style={{
@@ -1792,11 +3106,85 @@ export function MediaSyncDock({
                 >
                   Broadcast
                 </Button>
+                <Tooltip title="Stream a music/video file from this computer (mp3, mp4, webm, mkv…) — works offline">
+                  <span>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploading}
+                      startIcon={isUploading ? <CircularProgress size={11} sx={{ color: '#c084fc' }} /> : <UploadFile sx={{ fontSize: 14 }} />}
+                      sx={{
+                        color: '#c084fc',
+                        borderColor: 'rgba(168,85,247,0.4)',
+                        fontWeight: 700,
+                        fontSize: 10,
+                        textTransform: 'none',
+                        borderRadius: 1.5,
+                        py: 0.5,
+                        px: 1,
+                        whiteSpace: 'nowrap',
+                        '& .MuiButton-startIcon': { mr: 0.5 },
+                        '&:hover': { borderColor: '#c084fc', bgcolor: 'rgba(168,85,247,0.12)' },
+                      }}
+                    >
+                      📁 File
+                    </Button>
+                  </span>
+                </Tooltip>
               </Box>
             </form>
+            {isUploading && (
+              <Box sx={{ mt: 1 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.25 }}>
+                  <Typography sx={{ fontSize: 9, color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }}>
+                    Uploading {uploadLabel} to the local server…
+                  </Typography>
+                  <Typography sx={{ fontSize: 9, color: '#c084fc', fontVariantNumeric: 'tabular-nums' }}>
+                    {Math.round(uploadProgress * 100)}%
+                  </Typography>
+                </Box>
+                <LinearProgress
+                  variant={uploadProgress > 0 ? 'determinate' : 'indeterminate'}
+                  value={uploadProgress * 100}
+                  sx={{ height: 4, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.08)', '& .MuiLinearProgress-bar': { bgcolor: '#a855f7' } }}
+                />
+              </Box>
+            )}
           </Box>
         </Box>
       )}
+
+      {/* Transient toast (inside the dock so it also shows in native fullscreen) */}
+      {toast && (
+        <Box
+          role="status"
+          sx={{
+            position: isImmersive ? 'fixed' : 'absolute',
+            top: isImmersive ? 24 : -44,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 100000,
+            maxWidth: 'min(420px, calc(100vw - 32px))',
+            px: 1.5,
+            py: 0.75,
+            borderRadius: 2,
+            bgcolor: 'rgba(17,24,39,0.96)',
+            border: '1px solid rgba(168,85,247,0.45)',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+            color: '#f8fafc',
+            fontSize: 11,
+            fontWeight: 600,
+            textAlign: 'center',
+            pointerEvents: 'none',
+            whiteSpace: 'normal',
+          }}
+        >
+          {toast}
+        </Box>
+      )}
+
+      {renderMenus()}
     </Box>
   );
 }

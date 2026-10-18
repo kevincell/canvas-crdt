@@ -5,16 +5,23 @@
  *   GET  /api/ip        — returns local LAN IP for WiFi peer discovery
  *   GET  /api/room/:id  — room presence info
  *   GET  /health        — health check
+ *   GET  /api/time      — server clock (watch-party clock sync)
+ *   POST /api/media/upload — upload a local audio/video/subtitle file (raw body, X-Filename header)
+ *   GET  /api/media/:id    — stream an uploaded file (HTTP Range support for seeking)
  *
  * WebSocket (port 3001, path /ws and /):
  *   Fully compliant with y-webrtc signaling protocol (subscribe, unsubscribe, publish, ping/pong).
  *   Used for WebRTC peer discovery only. No canvas data is stored on this server.
  */
 
-import { createServer, type ServerResponse } from 'http';
+import { createServer, type ServerResponse, type IncomingMessage } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { networkInterfaces } from 'os';
 import { randomUUID } from 'crypto';
+import { stat as fsStat, unlink, readdir } from 'fs/promises';
+import { createReadStream, createWriteStream, existsSync, mkdirSync } from 'fs';
+import { join, extname, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,6 +49,70 @@ if (isNaN(PORT) || PORT < 1 || PORT > 65535) {
 const peers = new Map<WebSocket, Peer>();
 const rooms = new Map<string, Room>();
 
+// ── Media Uploads ────────────────────────────────────────────────────────────
+
+// This package is ESM ("type": "module"), so __dirname does not exist — derive it.
+// Resolves to apps/server/uploads from both src/ (tsx) and dist/ (node).
+const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
+const UPLOADS_DIR = join(SERVER_DIR, '..', 'uploads');
+if (!existsSync(UPLOADS_DIR)) {
+  mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 500 MB
+const UPLOAD_IDLE_TTL_MS = 6 * 60 * 60 * 1000; // delete files nobody has streamed for 6 hours
+
+// Upload metadata (original filename + last time a peer streamed it)
+const uploadMeta = new Map<string, { createdAt: number; lastAccess: number; filename: string }>();
+
+const MIME_TYPES: Record<string, string> = {
+  '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.aac': 'audio/aac',
+  '.m4a': 'audio/mp4',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+  '.mov': 'video/quicktime',
+  '.opus': 'audio/opus',
+  '.wma': 'audio/x-ms-wma',
+  '.wmv': 'video/x-ms-wmv',
+  '.m4v': 'video/mp4',
+  '.vtt': 'text/vtt; charset=utf-8',
+};
+
+const ALLOWED_EXTS = new Set(Object.keys(MIME_TYPES));
+
+// Auto-cleanup: scans the folder (so files left over from a previous run are cleaned too)
+// and only removes files that nobody has streamed recently — a long movie is never deleted mid-party.
+async function cleanupUploads() {
+  const now = Date.now();
+  let entries: string[] = [];
+  try {
+    entries = await readdir(UPLOADS_DIR);
+  } catch {
+    return;
+  }
+  for (const id of entries) {
+    const filepath = join(UPLOADS_DIR, id);
+    try {
+      const stats = await fsStat(filepath);
+      if (!stats.isFile()) continue;
+      const lastUsed = Math.max(stats.mtimeMs, uploadMeta.get(id)?.lastAccess ?? 0);
+      if (now - lastUsed > UPLOAD_IDLE_TTL_MS) {
+        await unlink(filepath);
+        console.log(`[media] Auto-cleaned idle upload: ${uploadMeta.get(id)?.filename ?? id}`);
+        uploadMeta.delete(id);
+      }
+    } catch { /* file busy or already gone — try again next round */ }
+  }
+}
+cleanupUploads();
+setInterval(cleanupUploads, 15 * 60 * 1000); // Check every 15 minutes
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function getLocalIP(): string {
@@ -61,8 +132,8 @@ function sendJSON(res: ServerResponse, status: number, data: unknown) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Filename, Range',
   });
   res.end(JSON.stringify(data));
 }
@@ -79,12 +150,13 @@ function safeSend(ws: WebSocket, message: unknown) {
 
 // ── HTTP Server ──────────────────────────────────────────────────────────────
 
-const httpServer = createServer((req, res) => {
+const httpServer = createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-Filename, Range',
+      'Access-Control-Max-Age': '86400',
     });
     res.end();
     return;
@@ -122,13 +194,186 @@ const httpServer = createServer((req, res) => {
     return;
   }
 
+  // Shared clock for watch-party sync (peers estimate their offset to this)
+  if (url.pathname === '/api/time' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify({ now: Date.now() }));
+    return;
+  }
+
   if (url.pathname === '/health' && req.method === 'GET') {
     sendJSON(res, 200, { status: 'ok', rooms: rooms.size, peers: peers.size });
     return;
   }
 
+  // ── File Upload Endpoint ──────────────────────────────────────────────────
+  // Body is the raw file bytes. Streamed straight to disk so a 500 MB movie
+  // never has to fit in RAM. Filename arrives URI-encoded in X-Filename.
+  if (url.pathname === '/api/media/upload' && req.method === 'POST') {
+    handleUpload(req, res);
+    return;
+  }
+
+  // ── File Serve Endpoint (with Range support for seeking) ──────────────────
+  const mediaMatch = url.pathname.match(/^\/api\/media\/([^/]+)$/);
+  if (mediaMatch && (req.method === 'GET' || req.method === 'HEAD')) {
+    await handleMediaServe(req, res, decodeURIComponent(mediaMatch[1]));
+    return;
+  }
+
   sendJSON(res, 404, { error: 'Not found' });
 });
+
+// ── Media handlers ───────────────────────────────────────────────────────────
+
+function handleUpload(req: IncomingMessage, res: ServerResponse) {
+  let originalName = `upload-${Date.now()}`;
+  const header = req.headers['x-filename'];
+  if (typeof header === 'string' && header.trim()) {
+    try {
+      originalName = decodeURIComponent(header);
+    } catch {
+      originalName = header;
+    }
+  }
+  // Strip any path components a client might send
+  originalName = originalName.split(/[\\/]/).pop() || originalName;
+
+  const ext = extname(originalName).toLowerCase();
+  if (!ALLOWED_EXTS.has(ext)) {
+    req.resume();
+    sendJSON(res, 415, { error: `Unsupported file type "${ext || 'none'}". Use audio/video files (mp3, mp4, webm, mkv, …) or .vtt subtitles.` });
+    return;
+  }
+
+  const declaredSize = Number(req.headers['content-length'] || 0);
+  if (declaredSize > MAX_UPLOAD_BYTES) {
+    req.resume();
+    sendJSON(res, 413, { error: 'File too large (max 500 MB)' });
+    return;
+  }
+
+  const fileId = `${randomUUID()}${ext}`;
+  const filepath = join(UPLOADS_DIR, fileId);
+  const out = createWriteStream(filepath);
+  let totalSize = 0;
+  let finished = false;
+
+  const fail = (status: number, message: string) => {
+    if (finished) return;
+    finished = true;
+    out.destroy();
+    unlink(filepath).catch(() => { /* ignore */ });
+    if (!res.headersSent) sendJSON(res, status, { error: message });
+  };
+
+  req.on('data', (chunk: Buffer) => {
+    totalSize += chunk.length;
+    if (totalSize > MAX_UPLOAD_BYTES) {
+      fail(413, 'File too large (max 500 MB)');
+      req.destroy();
+    }
+  });
+  req.on('aborted', () => fail(400, 'Upload aborted'));
+  req.on('error', () => fail(500, 'Upload stream error'));
+  out.on('error', (err) => {
+    console.error('[media] Upload write error:', err);
+    fail(500, 'Upload failed (could not write file)');
+  });
+  out.on('finish', () => {
+    if (finished) return;
+    finished = true;
+    const now = Date.now();
+    uploadMeta.set(fileId, { createdAt: now, lastAccess: now, filename: originalName });
+    const ip = getLocalIP();
+    console.log(`[media] Uploaded: ${originalName} (${(totalSize / 1024 / 1024).toFixed(1)} MB) → ${fileId}`);
+    sendJSON(res, 200, {
+      id: fileId,
+      // Relative path: each peer resolves it against its own route to this server.
+      path: `/api/media/${fileId}`,
+      url: `http://${ip}:${PORT}/api/media/${fileId}`,
+      filename: originalName,
+      size: totalSize,
+    });
+  });
+
+  req.pipe(out);
+}
+
+async function handleMediaServe(req: IncomingMessage, res: ServerResponse, fileId: string) {
+  // Security: only plain generated file names, no path traversal
+  if (!/^[\w-]+\.[\w]+$/.test(fileId)) {
+    sendJSON(res, 400, { error: 'Invalid file ID' });
+    return;
+  }
+
+  const filepath = join(UPLOADS_DIR, fileId);
+  let size: number;
+  try {
+    const stats = await fsStat(filepath);
+    if (!stats.isFile()) throw new Error('not a file');
+    size = stats.size;
+  } catch {
+    sendJSON(res, 404, { error: 'File not found (it may have been cleaned up — upload it again)' });
+    return;
+  }
+
+  const meta = uploadMeta.get(fileId);
+  if (meta) meta.lastAccess = Date.now();
+  else uploadMeta.set(fileId, { createdAt: Date.now(), lastAccess: Date.now(), filename: fileId });
+
+  const mimeType = MIME_TYPES[extname(fileId).toLowerCase()] || 'application/octet-stream';
+  const baseHeaders = {
+    'Content-Type': mimeType,
+    'Accept-Ranges': 'bytes',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+    'Cache-Control': 'no-cache',
+  };
+
+  const range = req.headers.range;
+  if (range && size > 0) {
+    // Supports "bytes=start-end", "bytes=start-" and suffix "bytes=-N"
+    const m = /^bytes=(\d*)-(\d*)/.exec(range);
+    let start = 0;
+    let end = size - 1;
+    if (m) {
+      if (m[1] === '' && m[2] !== '') {
+        start = Math.max(0, size - parseInt(m[2], 10));
+      } else {
+        start = parseInt(m[1] || '0', 10);
+        if (m[2] !== '') end = Math.min(size - 1, parseInt(m[2], 10));
+      }
+    }
+    if (!m || isNaN(start) || isNaN(end) || start > end || start >= size) {
+      res.writeHead(416, { 'Content-Range': `bytes */${size}`, 'Access-Control-Allow-Origin': '*' });
+      res.end();
+      return;
+    }
+    res.writeHead(206, {
+      ...baseHeaders,
+      'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Content-Length': end - start + 1,
+    });
+    if (req.method === 'HEAD') { res.end(); return; }
+    const stream = createReadStream(filepath, { start, end });
+    stream.on('error', () => res.destroy());
+    res.on('close', () => stream.destroy());
+    stream.pipe(res);
+    return;
+  }
+
+  res.writeHead(200, { ...baseHeaders, 'Content-Length': size });
+  if (req.method === 'HEAD') { res.end(); return; }
+  const stream = createReadStream(filepath);
+  stream.on('error', () => res.destroy());
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
+}
 
 // ── WebSocket Server (y-webrtc pub/sub signaling) ────────────────────────────
 

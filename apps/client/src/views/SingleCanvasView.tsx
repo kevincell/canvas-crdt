@@ -29,7 +29,7 @@ import { TemplatesModal } from '../features/templates/TemplatesModal';
 import { CURATED_TEMPLATES, instantiateTemplate } from '../features/templates/curatedTemplates';
 import { TaskTrackerHandoffModal } from '../features/integrations/TaskTrackerHandoffModal';
 import { ShareBoardModal } from '../features/sharing/ShareBoardModal';
-import { useMediaSync, MediaSyncDock } from '../features/media';
+import { useMediaSync, useScreenShare, MediaSyncDock } from '../features/media';
 import { sound } from '../utils/audio';
 
 type ToolType = 'stroke' | 'rect' | 'ellipse' | 'line' | 'arrow' | 'frame' | 'text' | 'image' | 'note' | 'laser' | 'select' | 'eraser';
@@ -192,8 +192,19 @@ export function SingleCanvasView({
     toggleLoop,
     toggleAutoPlayNext,
     updateTrack,
+    setPlaybackRate: setMediaPlaybackRate,
+    setSubtitleUrl: setMediaSubtitleUrl,
+    reanchor: reanchorMedia,
     stopBroadcast,
   } = useMediaSync(doc, actorName, participants);
+  // Awareness participant ids are String(doc.clientID), so that is this peer's id for screen-share signaling
+  const localActorId = doc ? String(doc.clientID) : '';
+  const screenShare = useScreenShare(doc, localActorId, participants);
+  // When someone starts sharing their screen, open the Watch Party dock so peers actually see it
+  const hasIncomingScreen = !!screenShare.incomingStream;
+  useEffect(() => {
+    if (hasIncomingScreen) setShowMediaDock(true);
+  }, [hasIncomingScreen]);
 
   const frames = shapes.filter(shape => !shape.deleted && shape.data.kind === ShapeKind.Rect && !!shape.data.frameTitle);
   const activePresentationFrame = frames[presentationIndex] ?? frames[0];
@@ -967,7 +978,10 @@ export function SingleCanvasView({
           </Button>
           <Button
             size="small"
-            onClick={() => setShowMediaDock(prev => !prev)}
+            onClick={() => {
+              if (showMediaDock && screenShare.isSharing) screenShare.stopSharing();
+              setShowMediaDock(prev => !prev);
+            }}
             title="Watch Party & Music — synchronize YouTube or media across peers"
             aria-label="Toggle Watch Party & Media Sync"
             aria-pressed={showMediaDock}
@@ -1754,8 +1768,22 @@ export function SingleCanvasView({
           onToggleLoop={toggleLoop}
           onToggleAutoPlayNext={toggleAutoPlayNext}
           onUpdateTrack={updateTrack}
+          onSetPlaybackRate={setMediaPlaybackRate}
+          onSetSubtitleUrl={setMediaSubtitleUrl}
+          onReanchor={reanchorMedia}
           onStopBroadcast={stopBroadcast}
-          onClose={() => setShowMediaDock(false)}
+          onClose={() => {
+            // Closing the dock while sharing would leave peers on a frozen frame — stop the share too
+            if (screenShare.isSharing) screenShare.stopSharing();
+            setShowMediaDock(false);
+          }}
+          isScreenSharing={screenShare.isSharing}
+          localScreenStream={screenShare.localStream}
+          incomingScreenStream={screenShare.incomingStream}
+          screenShareHostName={screenShare.hostName}
+          screenShareError={screenShare.error}
+          onStartScreenShare={screenShare.startSharing}
+          onStopScreenShare={screenShare.stopSharing}
         />
       )}
     </Box>

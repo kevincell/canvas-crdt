@@ -7,6 +7,8 @@ import {
   extractYouTubePlaylistId,
   extractYouTubePlaylistIndex,
   calculateEffectiveTime,
+  serverNow,
+  syncClockWithServer,
 } from './types';
 
 export function useMediaSync(
@@ -16,6 +18,13 @@ export function useMediaSync(
 ) {
   const [broadcasts, setBroadcasts] = useState<PeerBroadcast[]>([]);
   const [tunedInHost, setTunedInHost] = useState<string | null>(null);
+
+  // Keep this device's clock aligned with the server's (see serverNow in types.ts)
+  useEffect(() => {
+    syncClockWithServer(true);
+    const id = setInterval(() => { syncClockWithServer(); }, 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Read broadcasts from Yjs document
   useEffect(() => {
@@ -97,7 +106,7 @@ export function useMediaSync(
 
   // Start or change a broadcast (makes local user the Host)
   const startBroadcast = useCallback(
-    (url: string, title?: string) => {
+    (url: string, title?: string, options?: { subtitleUrl?: string }) => {
       if (!doc || !url.trim()) return;
       const cleanUrl = url.trim();
       const ytId = extractYouTubeId(cleanUrl);
@@ -117,11 +126,13 @@ export function useMediaSync(
         videoId: ytId || undefined,
         playing: true,
         currentTime: 0,
-        timestamp: Date.now(),
+        timestamp: serverNow(),
         loop: false,
         autoPlayNext: true,
         action: 'load',
-        updatedAt: Date.now(),
+        updatedAt: serverNow(),
+        playbackRate: 1,
+        subtitleUrl: options?.subtitleUrl,
       };
 
       const broadcastsMap = doc.getMap<string>('media-broadcasts');
@@ -153,11 +164,15 @@ export function useMediaSync(
     (patch: Partial<PeerBroadcast>) => {
       if (!doc || !currentBroadcast || !isHost) return;
 
+      // timestamp is reset below, so re-anchor currentTime when the patch doesn't set it
+      // (otherwise e.g. toggling loop mid-song would snap every peer back to the last anchor).
+      const anchoredTime = patch.currentTime !== undefined ? patch.currentTime : calculateEffectiveTime(currentBroadcast);
       const updated: PeerBroadcast = {
         ...currentBroadcast,
         ...patch,
-        timestamp: Date.now(),
-        updatedAt: Date.now(),
+        currentTime: anchoredTime,
+        timestamp: serverNow(),
+        updatedAt: serverNow(),
       };
 
       const broadcastsMap = doc.getMap<string>('media-broadcasts');
@@ -216,6 +231,46 @@ export function useMediaSync(
     updateCurrentBroadcast({ autoPlayNext: !currentBroadcast.autoPlayNext });
   }, [isHost, currentBroadcast, updateCurrentBroadcast]);
 
+  // Host changes playback speed for everyone. Re-anchor currentTime at the old rate first so
+  // calculateEffectiveTime() stays continuous across the rate change.
+  const setPlaybackRate = useCallback(
+    (rate: number) => {
+      if (!isHost || !currentBroadcast) return;
+      const safeRate = Math.min(4, Math.max(0.25, rate));
+      updateCurrentBroadcast({
+        currentTime: calculateEffectiveTime(currentBroadcast),
+        playbackRate: safeRate,
+        action: 'rate',
+      });
+    },
+    [isHost, currentBroadcast, updateCurrentBroadcast]
+  );
+
+  // Host heartbeat: re-anchor the broadcast to where the host's player REALLY is (it drifts from
+  // the computed time whenever the host buffers). Peers follow the anchor, so this keeps them on
+  // the host's actual position without anyone pausing and replaying.
+  const reanchor = useCallback(
+    (actualTime: number) => {
+      if (!isHost || !currentBroadcast || !currentBroadcast.playing) return;
+      updateCurrentBroadcast({
+        currentTime: Math.max(0, actualTime),
+        action: 'heartbeat',
+      });
+    },
+    [isHost, currentBroadcast, updateCurrentBroadcast]
+  );
+
+  const setSubtitleUrl = useCallback(
+    (subtitleUrl: string | undefined) => {
+      if (!isHost || !currentBroadcast) return;
+      updateCurrentBroadcast({
+        currentTime: calculateEffectiveTime(currentBroadcast),
+        subtitleUrl,
+      });
+    },
+    [isHost, currentBroadcast, updateCurrentBroadcast]
+  );
+
   const stopBroadcast = useCallback(() => {
     if (!doc || !isHost || !currentBroadcast) return;
     const broadcastsMap = doc.getMap<string>('media-broadcasts');
@@ -249,6 +304,9 @@ export function useMediaSync(
     toggleLoop,
     toggleAutoPlayNext,
     updateTrack,
+    setPlaybackRate,
+    setSubtitleUrl,
+    reanchor,
     stopBroadcast,
     calculateCurrentTime: () => (currentBroadcast ? calculateEffectiveTime(currentBroadcast) : 0),
   };
