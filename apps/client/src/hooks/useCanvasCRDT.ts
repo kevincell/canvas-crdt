@@ -92,6 +92,8 @@ export function useCanvasCRDT(
       ...conn,
       ...awareness,
       ...ops,
+      // Use awareness-based participant count (deduped) instead of raw WebRTC peer count
+      peerCount: Math.max(0, awareness.participants.length - 1),
       canUndo: false,
       canRedo: false,
       undo: () => {},
@@ -116,6 +118,8 @@ export function useCanvasCRDT(
     ...conn,
     ...awareness,
     ...ops,
+    // Use awareness-based participant count (deduped) instead of raw WebRTC peer count
+    peerCount: Math.max(0, awareness.participants.length - 1),
     doc: conn.doc,
   };
 }

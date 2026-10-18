@@ -34,8 +34,27 @@ export function useCRDTAwareness(doc: Y.Doc | null, awareness: Awareness | null)
   const [remoteLasers, setRemoteLasers] = useState<Map<string, RemoteLaser>>(new Map());
   const [participants, setParticipants] = useState<Participant[]>([]);
 
+  // Helper to rebuild participants from the full awareness state (deduped by name)
+  const rebuildParticipants = useCallback(() => {
+    if (!awareness) return;
+    const states = awareness.getStates();
+    const seen = new Map<string, Participant>();
+    for (const [id, state] of states.entries()) {
+      const s = state as any;
+      const name = s?.actor ?? 'Anonymous';
+      // Keep the entry with the highest clientID (most recent connection) when names collide
+      if (!seen.has(name) || Number(id) > Number(seen.get(name)!.id)) {
+        seen.set(name, { id: String(id), name, color: s?.color ?? '#7c3aed' });
+      }
+    }
+    setParticipants(Array.from(seen.values()));
+  }, [awareness]);
+
   useEffect(() => {
     if (!doc || !awareness) return;
+
+    // Build initial participant list from existing awareness states on mount
+    rebuildParticipants();
 
     const handleAwarenessUpdate = (updated: any) => {
       setRemoteCursors(prev => {
@@ -104,18 +123,15 @@ export function useCRDTAwareness(doc: Y.Doc | null, awareness: Awareness | null)
         return next;
       });
 
-      setParticipants(Array.from(awareness.getStates().entries() as Iterable<[number, any]>).map(([id, state]) => ({
-        id: String(id),
-        name: (state as any)?.actor ?? 'Anonymous',
-        color: (state as any)?.color ?? '#7c3aed',
-      })));
+      // Rebuild full participant list (deduped by name) on every awareness change
+      rebuildParticipants();
     };
 
     awareness.on('update', handleAwarenessUpdate);
     return () => {
       awareness.off('update', handleAwarenessUpdate);
     };
-  }, [doc, awareness]);
+  }, [doc, awareness, rebuildParticipants]);
 
   const setCursor = useCallback((x: number, y: number) => {
     awareness?.setLocalStateField('cursor', { x, y });

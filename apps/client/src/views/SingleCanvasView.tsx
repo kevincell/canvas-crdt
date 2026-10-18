@@ -29,6 +29,7 @@ import { TemplatesModal } from '../features/templates/TemplatesModal';
 import { CURATED_TEMPLATES, instantiateTemplate } from '../features/templates/curatedTemplates';
 import { TaskTrackerHandoffModal } from '../features/integrations/TaskTrackerHandoffModal';
 import { ShareBoardModal } from '../features/sharing/ShareBoardModal';
+import { useMediaSync, MediaSyncDock } from '../features/media';
 import { sound } from '../utils/audio';
 
 type ToolType = 'stroke' | 'rect' | 'ellipse' | 'line' | 'arrow' | 'frame' | 'text' | 'image' | 'note' | 'laser' | 'select' | 'eraser';
@@ -85,6 +86,7 @@ export function SingleCanvasView({
   const [showTemplates, setShowTemplates] = useState(false);
   const [showTaskHandoff, setShowTaskHandoff] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showMediaDock, setShowMediaDock] = useState(false);
   const [objectSearch, setObjectSearch] = useState('');
   const [focusObjectId, setFocusObjectId] = useState<string | null>(null);
   const [highlightShapeId, setHighlightShapeId] = useState<string | null>(null);
@@ -178,6 +180,21 @@ export function SingleCanvasView({
   const facilitation = useFacilitation(doc, actorName);
   const { checkpoints, createCheckpoint, deleteCheckpoint } = useBoardCheckpoints(doc);
   const stencilLibrary = useStencils();
+  const {
+    broadcasts,
+    currentBroadcast,
+    isHost: isMediaHost,
+    startBroadcast,
+    tuneIn,
+    playAll: playMediaAll,
+    pauseAll: pauseMediaAll,
+    seekAll: seekMediaAll,
+    toggleLoop,
+    toggleAutoPlayNext,
+    updateTrack,
+    stopBroadcast,
+  } = useMediaSync(doc, actorName, participants);
+
   const frames = shapes.filter(shape => !shape.deleted && shape.data.kind === ShapeKind.Rect && !!shape.data.frameTitle);
   const activePresentationFrame = frames[presentationIndex] ?? frames[0];
   let presentationFocusIds: string[] = [];
@@ -948,6 +965,34 @@ export function SingleCanvasView({
           >
             Share
           </Button>
+          <Button
+            size="small"
+            onClick={() => setShowMediaDock(prev => !prev)}
+            title="Watch Party & Music — synchronize YouTube or media across peers"
+            aria-label="Toggle Watch Party & Media Sync"
+            aria-pressed={showMediaDock}
+            sx={{
+              minWidth: 0,
+              px: 1,
+              fontSize: 10,
+              fontWeight: 700,
+              color: showMediaDock ? '#c084fc' : '#a855f7',
+              bgcolor: showMediaDock ? 'rgba(168,85,247,0.18)' : 'rgba(168,85,247,0.08)',
+              border: showMediaDock ? '1px solid rgba(168,85,247,0.6)' : '1px solid rgba(168,85,247,0.25)',
+              borderRadius: '6px',
+              textTransform: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.5,
+              boxShadow: showMediaDock ? '0 0 10px rgba(168,85,247,0.25)' : 'none',
+            }}
+          >
+            <span style={{ fontSize: 12 }}>🎬</span>
+            Watch Party
+            {currentBroadcast?.playing && (
+              <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
+            )}
+          </Button>
           {isReadOnly && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, py: 0.25, borderRadius: 1, bgcolor: 'rgba(251,146,60,.12)', border: '1px solid rgba(251,146,60,.3)' }}>
               <Typography sx={{ fontSize: 9, fontWeight: 800, color: '#fb923c', textTransform: 'uppercase', letterSpacing: 1 }}>Read Only</Typography>
@@ -972,7 +1017,12 @@ export function SingleCanvasView({
           {onLeave && (
             <Button
               size="small"
-              onClick={onLeave}
+              onClick={() => {
+                if (window.confirm('Leave this canvas board and return to the login screen?')) {
+                  onLeave();
+                }
+              }}
+              title="Exit this canvas board and return to login"
               sx={{
                 fontSize: 11,
                 color: '#ef4444',
@@ -985,7 +1035,7 @@ export function SingleCanvasView({
                 '&:hover': { background: 'rgba(239, 68, 68, 0.18)' },
               }}
             >
-              Leave Room
+              Exit Board
             </Button>
           )}
           {frames.length > 0 && <Button size="small" onClick={() => {
@@ -1688,6 +1738,26 @@ export function SingleCanvasView({
           />
         </Box>
       </Box>
+
+      {/* Floating Watch Party / Media Sync Dock */}
+      {showMediaDock && (
+        <MediaSyncDock
+          currentBroadcast={currentBroadcast}
+          broadcasts={broadcasts}
+          isHost={isMediaHost}
+          actorName={actorName}
+          onStartBroadcast={startBroadcast}
+          onTuneIn={tuneIn}
+          onPlayAll={playMediaAll}
+          onPauseAll={pauseMediaAll}
+          onSeekAll={seekMediaAll}
+          onToggleLoop={toggleLoop}
+          onToggleAutoPlayNext={toggleAutoPlayNext}
+          onUpdateTrack={updateTrack}
+          onStopBroadcast={stopBroadcast}
+          onClose={() => setShowMediaDock(false)}
+        />
+      )}
     </Box>
   );
 }
