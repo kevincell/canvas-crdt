@@ -41,6 +41,11 @@ export interface CRDTOps {
   commitShapeHistoryBatch: (entries: Array<{ id: string; prevData: any }>) => void;
   sendMessage: (text: string) => void;
   flushQueue: () => void;
+  /** Generic create with any data fields (style extensions included) */
+  createShape: (kind: ShapeKind, data: Partial<any>) => string | null;
+  /** Several updates in one transaction */
+  updateShapes: (updates: Array<{ id: string; data: Partial<any>; op?: EditOp }>, skipHistory?: boolean) => void;
+  deleteShapes: (ids: string[]) => void;
 }
 
 export function useCRDTOps(
@@ -238,6 +243,39 @@ export function useCRDTOps(
     );
   }, [doc, awareness, actorName, shapes, pushDeleteUndo]);
 
+  const createShape = useCallback((kind: ShapeKind, data: Partial<any>): string | null => {
+    if (!doc || !awareness) return null;
+    const shapesArray = doc.getArray('shapes');
+    const id = createShapeInCanvas(
+      { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
+      kind, data as any, actorName
+    );
+    recordCreate(id, shapesArray);
+    return id;
+  }, [doc, awareness, actorName, recordCreate]);
+
+  const updateShapes = useCallback((updates: Array<{ id: string; data: Partial<any>; op?: EditOp }>, skipHistory = false) => {
+    if (!doc || !awareness || !updates.length) return;
+    const shapesArray = doc.getArray('shapes');
+    if (!skipHistory) {
+      const changes = updates.flatMap(u => {
+        const shape = shapes.find(s => s.id === u.id);
+        return shape ? [{ id: u.id, prevData: shape.data, nextData: { ...shape.data, ...u.data } }] : [];
+      });
+      if (changes.length === 1) pushUpdateUndo(changes[0].id, changes[0].prevData, changes[0].nextData as any);
+      else if (changes.length) { undoStackRef.current.push({ type: 'batch-update', changes }); redoStackRef.current = []; }
+    }
+    doc.transact(() => updates.forEach(u => updateShapeInCanvas(
+      { doc, shapesArray, awareness, onChange: () => {}, dispose: () => {} } as any,
+      u.id, u.data, actorName, u.op ?? 'update'
+    )));
+  }, [doc, awareness, actorName, shapes, pushUpdateUndo]);
+
+  const deleteShapes = useCallback((ids: string[]) => {
+    if (!doc || !awareness || !ids.length) return;
+    doc.transact(() => ids.forEach(id => deleteShape(id)));
+  }, [doc, awareness, deleteShape]);
+
   const commitShapeHistory = useCallback((id: string, prevData: any) => {
     const shape = shapes.find(s => s.id === id);
     if (shape) {
@@ -355,6 +393,9 @@ export function useCRDTOps(
     commitShapeHistory,
     commitShapeHistoryBatch,
     sendMessage,
-    flushQueue
+    flushQueue,
+    createShape,
+    updateShapes,
+    deleteShapes,
   };
 }

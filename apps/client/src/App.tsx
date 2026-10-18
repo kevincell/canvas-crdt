@@ -1,88 +1,77 @@
-import { useState, useCallback } from 'react';
-import { JoinScreen } from './views/JoinScreen';
-import { SingleCanvasView } from './views/SingleCanvasView';
-import { DualPeerContainer } from './features/demo/DualPeerContainer';
+import { useCallback, useEffect, useState } from 'react';
 import { Box } from '@mui/material';
+import { JoinScreen } from './views/JoinScreen';
+import { RoomScreen } from './views/RoomScreen';
+import { type JoinMode } from './features/room/useRoom';
+import { getDeviceId, getStoredName, setStoredName, getPointerColor, setPointerColor, randomId, IS_GUEST_TAB } from './app/identity';
 
-type AppMode = 'join' | 'canvas' | 'dual';
+type Route =
+  | { screen: 'home'; notice?: string | null; prefillRoom?: string }
+  | { screen: 'room'; roomId: string; mode: JoinMode; createInfo?: { name: string; description: string }; boardId?: string };
 
-// Load persisted preferences
-function loadPrefs() {
-  return {
-    name: localStorage.getItem('crdt-canvas-name') || '',
-    roomId: localStorage.getItem('crdt-canvas-last-room') || '',
-    color: localStorage.getItem('crdt-canvas-color') || '#7c3aed',
-  };
+function routeFromUrl(hasName: boolean): Route {
+  const params = new URLSearchParams(window.location.search);
+  const room = params.get('room')?.trim();
+  if (!room) return { screen: 'home' };
+  const view = params.get('view') === '1';
+  if (!view && !hasName) return { screen: 'home', prefillRoom: room };
+  return { screen: 'room', roomId: room, mode: view ? 'view' : 'join', boardId: params.get('board') ?? undefined };
 }
 
 export default function App() {
-  const [mode, setMode] = useState<AppMode>('join');
-  const [actorName, setActorName] = useState(() => loadPrefs().name);
-  const [roomId, setRoomId] = useState(() => loadPrefs().roomId);
-  const [activeColor] = useState(() => loadPrefs().color);
+  const [deviceId] = useState(getDeviceId);
+  const [name, setName] = useState(getStoredName);
+  const [color, setColor] = useState(getPointerColor);
+  const [route, setRoute] = useState<Route>(() => routeFromUrl(!!getStoredName()));
 
-  const handleJoin = useCallback((name: string, room: string) => {
-    setActorName(name);
-    setRoomId(room);
-    localStorage.setItem('crdt-canvas-name', name);
-    localStorage.setItem('crdt-canvas-last-room', room);
-    setMode('canvas');
+  // Keep the address bar in step (so refresh / copy-paste reopens the same room & board)
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (route.screen === 'room') {
+      url.searchParams.set('room', route.roomId);
+      if (route.boardId) url.searchParams.set('board', route.boardId); else url.searchParams.delete('board');
+      if (route.mode === 'view') url.searchParams.set('view', '1'); else url.searchParams.delete('view');
+    } else {
+      url.search = '';
+    }
+    if (IS_GUEST_TAB) url.searchParams.set('guest', '1');
+    window.history.replaceState(null, '', url.toString());
+  }, [route]);
+
+  const onIdentity = useCallback((n: string, c: string) => {
+    if (n) { setName(n); setStoredName(n); }
+    setColor(c); setPointerColor(c);
   }, []);
 
-  const handleLaunchDual = useCallback((room: string) => {
-    const finalRoom = room || 'demo-' + Math.random().toString(36).slice(2, 8);
-    setRoomId(finalRoom);
-    localStorage.setItem('crdt-canvas-last-room', finalRoom);
-    setMode('dual');
-  }, []);
+  const goHome = useCallback((notice?: string) => setRoute({ screen: 'home', notice: notice ?? null }), []);
 
-  const handleLeave = useCallback(() => {
-    setMode('join');
-  }, []);
-
-  const handleSwitchRoom = useCallback((newRoom: string) => {
-    setRoomId(newRoom);
-    localStorage.setItem('crdt-canvas-last-room', newRoom);
-    setMode('canvas');
-  }, []);
-
-  const handleToggleSplit = useCallback(() => {
-    setMode(m => (m === 'dual' ? 'canvas' : 'dual'));
-  }, []);
+  const identity = { deviceId, name: name || 'Viewer', color };
 
   return (
-    <Box className="pewdiepie-bg" sx={{
-      width: '100vw',
-      height: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      background: 'transparent',
-      overflow: 'hidden',
-    }}>
-      {mode === 'join' && (
+    <Box sx={{ width: '100vw', height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {route.screen === 'home' ? (
         <JoinScreen
-          onJoin={handleJoin}
-          onLaunchDual={handleLaunchDual}
+          name={name}
+          color={color}
+          initialRoom={route.prefillRoom}
+          notice={route.notice}
+          onIdentity={onIdentity}
+          onCreate={info => setRoute({ screen: 'room', roomId: randomId(6), mode: 'create', createInfo: info, boardId: 'main' })}
+          onJoin={roomId => setRoute({ screen: 'room', roomId, mode: 'join' })}
         />
-      )}
-
-      {mode === 'dual' && (
-        <DualPeerContainer
-          roomId={roomId || 'demo-dual'}
-          onExitDual={() => setMode('canvas')}
-        />
-      )}
-
-      {mode === 'canvas' && (
-        <SingleCanvasView
-          actorName={actorName || 'Alice'}
-          roomId={roomId || 'demo-room'}
-          initialColor={activeColor}
-          onLeave={handleLeave}
-          onSwitchRoom={handleSwitchRoom}
-          onToggleSplitScreen={handleToggleSplit}
-          isSplitScreen={false}
-          hideShowcase={false}
+      ) : (
+        <RoomScreen
+          key={`${route.roomId}:${route.mode}`}
+          roomId={route.roomId}
+          mode={route.mode}
+          createInfo={route.createInfo}
+          boardId={route.boardId}
+          identity={identity}
+          onBoardChange={boardId => setRoute(r => (r.screen === 'room' ? { ...r, boardId } : r))}
+          onHome={goHome}
+          onSwitchRoom={roomId => setRoute({ screen: 'room', roomId, mode: 'join' })}
+          onRename={n => onIdentity(n, color)}
+          onColor={c => onIdentity(name, c)}
         />
       )}
     </Box>

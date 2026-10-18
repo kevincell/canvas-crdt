@@ -20,9 +20,9 @@ export function FloatingConflictWidget({
 
   const levelColor = (level: string) => {
     switch (level) {
-      case 'high': return '#ef4444';
-      case 'medium': return '#f59e0b';
-      case 'low': return '#3b82f6';
+      case 'high': return '#C9573F';
+      case 'medium': return '#C9922E';
+      case 'low': return '#5F8299';
       default: return '#8888a8';
     }
   };
@@ -33,12 +33,12 @@ export function FloatingConflictWidget({
       left,
       top,
       width: 280,
-      background: 'rgba(20, 20, 32, 0.94)',
+      background: 'var(--c-surface)',
       border: `1px solid ${levelColor(conflict.level)}`,
       borderRadius: 2.5,
       padding: '12px 14px',
       backdropFilter: 'blur(20px)',
-      boxShadow: '0 12px 40px rgba(0,0,0,0.65)',
+      boxShadow: 'var(--c-shadow)',
       zIndex: 100,
       animation: 'popIn 0.2s ease',
       transform: 'translate(-50%, 0)', // center horizontally relative to shape left (wait, better to center relative to shape center)
@@ -58,10 +58,10 @@ export function FloatingConflictWidget({
             height: 20,
           }}
         />
-        <Typography sx={{ fontSize: 11, color: '#9090b8', fontWeight: 600 }}>{conflict.actors.join(' ↔ ')}</Typography>
+        <Typography sx={{ fontSize: 11, color: 'var(--c-text-muted)', fontWeight: 600 }}>{conflict.actors.join(' ↔ ')}</Typography>
       </Box>
 
-      <Typography sx={{ fontSize: 11, color: '#d1d1e5', mb: 1, lineHeight: 1.3 }}>
+      <Typography sx={{ fontSize: 11, color: 'var(--c-text)', mb: 1, lineHeight: 1.3 }}>
         {conflict.description}
       </Typography>
 
@@ -71,14 +71,14 @@ export function FloatingConflictWidget({
           onClick={(e) => { e.stopPropagation(); onResolve(conflict.shapeId, 'merge'); }}
           sx={{
             flex: 1, fontSize: 9.5, fontWeight: 600,
-            background: 'rgba(124, 58, 237, 0.25)',
-            border: '1px solid rgba(124, 58, 237, 0.5)',
-            color: '#c4b5fd',
+            background: 'var(--c-primary-soft)',
+            border: '1px solid var(--c-primary)',
+            color: 'var(--c-primary-strong)',
             textTransform: 'none',
             py: 0.5,
             px: 0.5,
             minWidth: 0,
-            '&:hover': { background: 'rgba(124, 58, 237, 0.45)' },
+            '&:hover': { background: 'var(--c-primary-soft)', filter: 'brightness(0.95)' },
           }}
         >
           Merge
@@ -88,14 +88,14 @@ export function FloatingConflictWidget({
           onClick={(e) => { e.stopPropagation(); onResolve(conflict.shapeId, 'keep-local'); }}
           sx={{
             flex: 1, fontSize: 9.5, fontWeight: 600,
-            background: 'rgba(16, 185, 129, 0.2)',
-            border: '1px solid rgba(16, 185, 129, 0.45)',
-            color: '#6ee7b7',
+            background: 'var(--c-success-soft)',
+            border: '1px solid var(--c-success)',
+            color: 'var(--c-success)',
             textTransform: 'none',
             py: 0.5,
             px: 0.5,
             minWidth: 0,
-            '&:hover': { background: 'rgba(16, 185, 129, 0.35)' },
+            '&:hover': { background: 'var(--c-success-soft)', filter: 'brightness(0.95)' },
           }}
         >
           Keep Mine
@@ -105,14 +105,14 @@ export function FloatingConflictWidget({
           onClick={(e) => { e.stopPropagation(); onResolve(conflict.shapeId, 'keep-remote'); }}
           sx={{
             flex: 1, fontSize: 9.5, fontWeight: 600,
-            background: 'rgba(59, 130, 246, 0.2)',
-            border: '1px solid rgba(59, 130, 246, 0.45)',
-            color: '#93c5fd',
+            background: 'var(--c-info-soft)',
+            border: '1px solid var(--c-info)',
+            color: 'var(--c-info)',
             textTransform: 'none',
             py: 0.5,
             px: 0.5,
             minWidth: 0,
-            '&:hover': { background: 'rgba(59, 130, 246, 0.35)' },
+            '&:hover': { background: 'var(--c-info-soft)', filter: 'brightness(0.95)' },
           }}
         >
           Remote

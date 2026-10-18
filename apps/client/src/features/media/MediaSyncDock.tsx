@@ -1500,13 +1500,13 @@ export function MediaSyncDock({
     const isOverlay = variant === 'overlay';
     const iconSize = isOverlay ? 19 : 16;
     const baseColor = isOverlay ? '#cbd5e1' : '#94a3b8';
-    const btnSx = (active: boolean, activeColor = '#c084fc') => ({
+    const btnSx = (active: boolean, activeColor = 'var(--c-primary-strong)') => ({
       p: 0.5,
       borderRadius: 1.5,
       color: active ? activeColor : baseColor,
-      bgcolor: active ? 'rgba(168,85,247,0.2)' : 'transparent',
+      bgcolor: active ? 'var(--c-primary-soft)' : 'transparent',
       border: active ? '1px solid rgba(168,85,247,0.4)' : '1px solid transparent',
-      '&:hover': { color: '#f8fafc', bgcolor: 'rgba(168,85,247,0.15)' },
+      '&:hover': { color: isOverlay ? '#f8fafc' : 'var(--c-text)', bgcolor: 'var(--c-primary-soft)' },
     });
     const speedLabel = `${effectiveRate}×`;
 
@@ -1540,7 +1540,7 @@ export function MediaSyncDock({
           title={isHost ? 'Playback speed (for everyone)' : isDesyncedByChoice ? 'Your own speed — press Sync to follow the host again' : 'Playback speed'}
           startIcon={<Speed sx={{ fontSize: `${iconSize - 2}px !important` }} />}
           sx={{
-            ...btnSx(effectiveRate !== 1, isDesyncedByChoice ? '#fbbf24' : '#c084fc'),
+            ...btnSx(effectiveRate !== 1, isDesyncedByChoice ? '#fbbf24' : 'var(--c-primary-strong)'),
             minWidth: 0,
             px: 0.75,
             py: 0.25,
@@ -1565,7 +1565,7 @@ export function MediaSyncDock({
         onClose={() => setSpeedMenuAnchor(null)}
         container={dockContainerRef.current}
         disableScrollLock
-        slotProps={{ paper: { sx: { bgcolor: '#111827', color: '#f8fafc', border: '1px solid rgba(168,85,247,0.3)', minWidth: 150 } } }}
+        slotProps={{ paper: { sx: { bgcolor: 'var(--c-surface)', color: 'var(--c-text)', border: '1px solid var(--c-border-strong)', minWidth: 150 } } }}
       >
         <Box sx={{ px: 2, py: 0.5, fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
           {isHost ? 'Speed for everyone' : 'Speed (just you)'}
@@ -1574,7 +1574,7 @@ export function MediaSyncDock({
           const selected = Math.abs(rate - effectiveRate) < 0.001;
           return (
             <MenuItem key={rate} dense selected={selected} onClick={() => handleSelectSpeed(rate)}>
-              <ListItemIcon sx={{ minWidth: 26, color: '#c084fc' }}>
+              <ListItemIcon sx={{ minWidth: 26, color: 'var(--c-primary-strong)' }}>
                 {selected ? <Check sx={{ fontSize: 16 }} /> : null}
               </ListItemIcon>
               <ListItemText
@@ -1582,7 +1582,7 @@ export function MediaSyncDock({
                 secondary={!isHost && Math.abs(rate - hostRate) < 0.001 ? 'Host speed' : undefined}
                 slotProps={{
                   primary: { sx: { fontSize: 12 } },
-                  secondary: { sx: { fontSize: 9, color: '#a855f7' } },
+                  secondary: { sx: { fontSize: 9, color: 'var(--c-primary)' } },
                 }}
               />
             </MenuItem>
@@ -1634,7 +1634,7 @@ export function MediaSyncDock({
                 setVolume(nextVal);
                 if (isMuted && nextVal > 0) setIsMuted(false);
               }}
-              sx={{ width: 90, color: '#a855f7', height: 3, '& .MuiSlider-thumb': { width: 10, height: 10 } }}
+              sx={{ width: 90, color: 'var(--c-primary)', height: 3, '& .MuiSlider-thumb': { width: 10, height: 10 } }}
             />
           </>
         )}
@@ -1689,7 +1689,7 @@ export function MediaSyncDock({
           }}
         >
           {currentBroadcast.title}
-          {isHost && <span style={{ color: '#c084fc', marginLeft: 8, fontSize: 11 }}>👑 Host</span>}
+          {isHost && <span style={{ color: 'var(--c-primary-strong)', marginLeft: 8, fontSize: 11 }}>👑 Host</span>}
           {!isHost && <span style={{ color: '#60a5fa', marginLeft: 8, fontSize: 11 }}>🎧 {currentBroadcast.hostName}</span>}
         </Typography>
 
@@ -1707,7 +1707,7 @@ export function MediaSyncDock({
             onChangeCommitted={handleSeekCommit}
             disabled={!isHost}
             sx={{
-              color: '#a855f7',
+              color: 'var(--c-primary)',
               height: 5,
               '& .MuiSlider-thumb': { width: 12, height: 12 },
               '& .MuiSlider-rail': { bgcolor: 'rgba(255,255,255,0.18)' },
@@ -1742,7 +1742,7 @@ export function MediaSyncDock({
               }}
               sx={{
                 width: 70,
-                color: '#a855f7',
+                color: 'var(--c-primary)',
                 height: 3,
                 '& .MuiSlider-thumb': { width: 10, height: 10 },
               }}
@@ -1765,7 +1765,7 @@ export function MediaSyncDock({
               <IconButton
                 size="small"
                 onClick={() => { if (ytPlayerRef.current?.previousVideo) ytPlayerRef.current.previousVideo(); }}
-                sx={{ color: '#c084fc', p: 0.5, '&:hover': { color: '#e879f9' } }}
+                sx={{ color: 'var(--c-primary-strong)', p: 0.5, '&:hover': { color: 'var(--c-accent)' } }}
               >
                 <SkipPrevious sx={{ fontSize: 24 }} />
               </IconButton>
@@ -1777,9 +1777,9 @@ export function MediaSyncDock({
               onClick={isHost ? handleTogglePlay : handleLocalToggle}
               sx={{
                 color: '#fff',
-                bgcolor: 'rgba(168, 85, 247, 0.6)',
+                bgcolor: 'var(--c-primary)',
                 p: 1.25,
-                '&:hover': { bgcolor: 'rgba(168, 85, 247, 0.85)' },
+                '&:hover': { bgcolor: 'var(--c-primary)' },
                 transition: 'background 0.2s ease',
               }}
             >
@@ -1794,7 +1794,7 @@ export function MediaSyncDock({
               <IconButton
                 size="small"
                 onClick={() => { if (ytPlayerRef.current?.nextVideo) ytPlayerRef.current.nextVideo(); }}
-                sx={{ color: '#c084fc', p: 0.5, '&:hover': { color: '#e879f9' } }}
+                sx={{ color: 'var(--c-primary-strong)', p: 0.5, '&:hover': { color: 'var(--c-accent)' } }}
               >
                 <SkipNext sx={{ fontSize: 24 }} />
               </IconButton>
@@ -1824,7 +1824,7 @@ export function MediaSyncDock({
                   size="small"
                   onClick={handleManualSync}
                   title="Sync to host"
-                  sx={{ color: peerSkipped ? '#fbbf24' : '#c084fc', p: 0.5, '&:hover': { color: '#e879f9', bgcolor: 'rgba(168,85,247,0.2)' } }}
+                  sx={{ color: peerSkipped ? '#fbbf24' : 'var(--c-primary-strong)', p: 0.5, '&:hover': { color: 'var(--c-accent)', bgcolor: 'var(--c-primary-soft)' } }}
                 >
                   <SyncIcon sx={{ fontSize: 20 }} />
                 </IconButton>
@@ -1849,10 +1849,10 @@ export function MediaSyncDock({
                 onClick={onToggleLoop}
                 sx={{
                   p: 0.5,
-                  color: currentBroadcast.loop ? '#c084fc' : '#64748b',
-                  bgcolor: currentBroadcast.loop ? 'rgba(168,85,247,0.25)' : 'transparent',
+                  color: currentBroadcast.loop ? 'var(--c-primary-strong)' : '#64748b',
+                  bgcolor: currentBroadcast.loop ? 'var(--c-primary-soft)' : 'transparent',
                   borderRadius: 1.5,
-                  '&:hover': { color: '#c084fc', bgcolor: 'rgba(168,85,247,0.2)' },
+                  '&:hover': { color: 'var(--c-primary-strong)', bgcolor: 'var(--c-primary-soft)' },
                 }}
               >
                 <Repeat sx={{ fontSize: 18 }} />
@@ -1900,12 +1900,12 @@ export function MediaSyncDock({
       sx={{
         position: 'fixed',
         ...(isMinimized && minimizedPos
-          ? { left: minimizedPos.x, top: minimizedPos.y, right: 'auto', bottom: 'auto' }
+          ? { left: minimizedPos.x, top: minimizedPos.y, right: 'auto', bottom: 'auto', zIndex: 1250 }
           : isFullScreen
           ? { inset: 0, width: '100vw', height: '100vh', zIndex: 99999, bgcolor: '#000' }
           : isWideScreen
           ? { inset: 0, width: '100vw', height: '100vh', zIndex: 99999, bgcolor: '#000' }
-          : { bottom: 20, right: 20, width: 380, maxWidth: 'calc(100vw - 32px)', zIndex: 1000 }),
+          : { bottom: 20, right: 20, width: 380, maxWidth: 'calc(100vw - 32px)', zIndex: 1250 }),
         display: 'flex',
         flexDirection: 'column',
         fontFamily: 'Inter, sans-serif',
@@ -2038,7 +2038,7 @@ export function MediaSyncDock({
             <MusicNote
               sx={{
                 fontSize: isImmersive ? 120 : 54,
-                color: '#c084fc',
+                color: 'var(--c-primary-strong)',
                 animation: currentBroadcast?.playing && !isLocallyPaused ? 'mediaPulse 1.6s ease-in-out infinite' : 'none',
                 '@keyframes mediaPulse': {
                   '0%, 100%': { transform: 'scale(1)', opacity: 0.85 },
@@ -2122,7 +2122,7 @@ export function MediaSyncDock({
               cursor: 'pointer',
             }}
           >
-            <Button variant="contained" startIcon={<PlayArrow />} sx={{ textTransform: 'none', fontWeight: 700, bgcolor: '#a855f7' }}>
+            <Button variant="contained" startIcon={<PlayArrow />} sx={{ textTransform: 'none', fontWeight: 700, bgcolor: 'var(--c-primary)' }}>
               Click to watch & listen
             </Button>
           </Box>
@@ -2203,13 +2203,13 @@ export function MediaSyncDock({
             px: 1.5,
             py: 0.85,
             borderRadius: '40px',
-            background: 'rgba(13, 17, 23, 0.96)',
+            background: 'var(--c-surface)',
             backdropFilter: 'blur(20px)',
-            border: isDragging ? '1px solid rgba(168, 85, 247, 0.8)' : '1px solid rgba(168, 85, 247, 0.35)',
+            border: isDragging ? '1px solid var(--c-border-strong)' : '1px solid var(--c-border-strong)',
             boxShadow: isDragging
-              ? '0 16px 40px rgba(0,0,0,0.7), 0 0 24px rgba(168, 85, 247, 0.45)'
-              : '0 12px 32px rgba(0,0,0,0.5), 0 0 16px rgba(168, 85, 247, 0.2)',
-            color: '#f8fafc',
+              ? '0 16px 40px rgba(0,0,0,0.7), 0 0 24px var(--c-primary-soft)'
+              : 'var(--c-shadow)',
+            color: 'var(--c-text)',
             cursor: isDragging ? 'grabbing' : 'grab',
             touchAction: 'none',
             userSelect: 'none',
@@ -2221,7 +2221,7 @@ export function MediaSyncDock({
             <DragIndicator
               sx={{
                 fontSize: 16,
-                color: isDragging ? '#c084fc' : '#94a3b8',
+                color: isDragging ? 'var(--c-primary-strong)' : 'var(--c-text-muted)',
                 opacity: 0.8,
                 cursor: isDragging ? 'grabbing' : 'grab',
                 mr: -0.5,
@@ -2233,9 +2233,9 @@ export function MediaSyncDock({
             size="small"
             onClick={handleTogglePlay}
             sx={{
-              bgcolor: 'rgba(168, 85, 247, 0.25)',
-              color: '#c084fc',
-              '&:hover': { bgcolor: 'rgba(168, 85, 247, 0.4)' },
+              bgcolor: 'var(--c-primary-soft)',
+              color: 'var(--c-primary-strong)',
+              '&:hover': { bgcolor: 'var(--c-primary)' },
             }}
           >
             {(isHost ? currentBroadcast?.playing : !isLocallyPaused && currentBroadcast?.playing) ? (
@@ -2259,10 +2259,10 @@ export function MediaSyncDock({
               whiteSpace: 'nowrap',
             }}
           >
-            <Typography sx={{ fontSize: 11, fontWeight: 700, color: '#f3e8ff' }}>
+            <Typography sx={{ fontSize: 11, fontWeight: 700, color: 'var(--c-text)' }}>
               {currentBroadcast ? currentBroadcast.title : 'Watch Party'}
             </Typography>
-            <Typography sx={{ fontSize: 9, color: isLocallyPaused ? '#fca5a5' : '#a855f7' }}>
+            <Typography sx={{ fontSize: 9, color: isLocallyPaused ? '#fca5a5' : 'var(--c-primary)' }}>
               {isHost ? '👑 Host' : `🎧 ${currentBroadcast?.hostName || 'Room'}`} · {formatTime(localProgress)}
             </Typography>
           </Box>
@@ -2275,7 +2275,7 @@ export function MediaSyncDock({
               }
             }}
             title="Expand Watch Party"
-            sx={{ color: '#94a3b8' }}
+            sx={{ color: 'var(--c-text-muted)' }}
           >
             <OpenInFull sx={{ fontSize: 14 }} />
           </IconButton>
@@ -2296,15 +2296,15 @@ export function MediaSyncDock({
           sx={{
             width: '100%',
             borderRadius: currentBroadcast || screenActive ? '0 0 16px 16px' : '16px',
-            background: 'rgba(15, 20, 32, 0.95)',
+            background: 'var(--c-surface)',
             backdropFilter: 'blur(24px)',
-            border: '1px solid rgba(168, 85, 247, 0.22)',
-            borderTop: currentBroadcast || screenActive ? 'none' : '1px solid rgba(168, 85, 247, 0.22)',
-            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.75), 0 0 30px rgba(168, 85, 247, 0.14)',
+            border: '1px solid var(--c-border-strong)',
+            borderTop: currentBroadcast || screenActive ? 'none' : '1px solid var(--c-border-strong)',
+            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.75), 0 0 30px var(--c-primary-soft)',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-            color: '#f8fafc',
+            color: 'var(--c-text)',
           }}
         >
           {/* Header */}
@@ -2316,12 +2316,12 @@ export function MediaSyncDock({
               px: 2,
               py: 1.25,
               background: 'linear-gradient(90deg, rgba(124,58,237,0.18) 0%, rgba(59,130,246,0.1) 100%)',
-              borderBottom: '1px solid rgba(255,255,255,0.06)',
+              borderBottom: '1px solid var(--c-border)',
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <MusicNote sx={{ fontSize: 17, color: '#c084fc' }} />
-              <Typography sx={{ fontSize: 13, fontWeight: 700, color: '#f8fafc' }}>
+              <MusicNote sx={{ fontSize: 17, color: 'var(--c-primary-strong)' }} />
+              <Typography sx={{ fontSize: 13, fontWeight: 700, color: 'var(--c-text)' }}>
                 Watch Party
               </Typography>
               {currentBroadcast && (
@@ -2332,9 +2332,9 @@ export function MediaSyncDock({
                     height: 18,
                     fontSize: 9,
                     fontWeight: 700,
-                    bgcolor: isHost ? 'rgba(168, 85, 247, 0.25)' : 'rgba(59, 130, 246, 0.2)',
-                    color: isHost ? '#c084fc' : '#60a5fa',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    bgcolor: isHost ? 'var(--c-primary-soft)' : 'rgba(59, 130, 246, 0.2)',
+                    color: isHost ? 'var(--c-primary-strong)' : 'var(--c-info)',
+                    border: '1px solid var(--c-border)',
                   }}
                 />
               )}
@@ -2350,12 +2350,12 @@ export function MediaSyncDock({
                     if (isFullScreen) setIsFullScreen(false);
                   }}
                   sx={{
-                    color: isWideScreen ? '#c084fc' : '#94a3b8',
-                    bgcolor: isWideScreen ? 'rgba(168,85,247,0.2)' : 'transparent',
+                    color: isWideScreen ? 'var(--c-primary-strong)' : 'var(--c-text-muted)',
+                    bgcolor: isWideScreen ? 'var(--c-primary-soft)' : 'transparent',
                     p: 0.5,
                     borderRadius: 1.5,
-                    border: isWideScreen ? '1px solid rgba(168,85,247,0.4)' : '1px solid transparent',
-                    '&:hover': { color: '#f8fafc', bgcolor: 'rgba(168,85,247,0.15)' },
+                    border: isWideScreen ? '1px solid var(--c-border-strong)' : '1px solid transparent',
+                    '&:hover': { color: 'var(--c-text)', bgcolor: 'var(--c-primary-soft)' },
                   }}
                 >
                   <AspectRatio sx={{ fontSize: 16 }} />
@@ -2371,12 +2371,12 @@ export function MediaSyncDock({
                     if (!isFullScreen) setIsWideScreen(false);
                   }}
                   sx={{
-                    color: isFullScreen ? '#60a5fa' : '#94a3b8',
+                    color: isFullScreen ? 'var(--c-info)' : 'var(--c-text-muted)',
                     bgcolor: isFullScreen ? 'rgba(59,130,246,0.2)' : 'transparent',
                     p: 0.5,
                     borderRadius: 1.5,
                     border: isFullScreen ? '1px solid rgba(59,130,246,0.4)' : '1px solid transparent',
-                    '&:hover': { color: '#f8fafc', bgcolor: 'rgba(59,130,246,0.15)' },
+                    '&:hover': { color: 'var(--c-text)', bgcolor: 'rgba(59,130,246,0.15)' },
                   }}
                 >
                   {isFullScreen ? <FullscreenExit sx={{ fontSize: 18 }} /> : <Fullscreen sx={{ fontSize: 18 }} />}
@@ -2391,7 +2391,7 @@ export function MediaSyncDock({
                   setIsMinimized(true);
                 }}
                 title="Minimize (music continues playing!)"
-                sx={{ color: '#94a3b8', p: 0.5, '&:hover': { color: '#f8fafc' } }}
+                sx={{ color: 'var(--c-text-muted)', p: 0.5, '&:hover': { color: 'var(--c-text)' } }}
               >
                 <Remove sx={{ fontSize: 16 }} />
               </IconButton>
@@ -2399,7 +2399,7 @@ export function MediaSyncDock({
                 size="small"
                 onClick={handleClose}
                 title={isHost ? "Stop Broadcast & Close Watch Party (stay on canvas)" : "Close Watch Party (stay on canvas)"}
-                sx={{ color: '#94a3b8', p: 0.5, '&:hover': { color: '#ef4444' } }}
+                sx={{ color: 'var(--c-text-muted)', p: 0.5, '&:hover': { color: '#ef4444' } }}
               >
                 <Close sx={{ fontSize: 16 }} />
               </IconButton>
@@ -2412,16 +2412,16 @@ export function MediaSyncDock({
               sx={{
                 px: 2,
                 py: 0.75,
-                bgcolor: 'rgba(255, 255, 255, 0.03)',
-                borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+                bgcolor: 'var(--c-surface2)',
+                borderBottom: '1px solid var(--c-border)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
               }}
             >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Radio sx={{ fontSize: 13, color: '#a855f7' }} />
-                <Typography sx={{ fontSize: 10, color: '#cbd5e1' }}>
+                <Radio sx={{ fontSize: 13, color: 'var(--c-primary)' }} />
+                <Typography sx={{ fontSize: 10, color: 'var(--c-text)' }}>
                   {otherBroadcasts.length > 0
                     ? `${broadcasts.length} streams in room`
                     : syncNotice || (isHost ? 'Broadcasting live to peers' : `Synced with ${currentBroadcast?.hostName}`)}
@@ -2438,7 +2438,7 @@ export function MediaSyncDock({
                     textTransform: 'none',
                     py: 0.2,
                     px: 0.75,
-                    color: '#c084fc',
+                    color: 'var(--c-primary-strong)',
                   }}
                 >
                   {showPeerList ? 'Hide Streams' : 'Switch Stream ▾'}
@@ -2449,8 +2449,8 @@ export function MediaSyncDock({
 
           {/* Dropdown list of other peer streams */}
           {showPeerList && otherBroadcasts.length > 0 && (
-            <Box sx={{ p: 1, bgcolor: 'rgba(15, 23, 42, 0.98)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-              <Typography sx={{ fontSize: 9, color: '#94a3b8', mb: 0.5, px: 1, fontWeight: 700, textTransform: 'uppercase' }}>
+            <Box sx={{ p: 1, bgcolor: 'var(--c-surface)', borderBottom: '1px solid var(--c-border)' }}>
+              <Typography sx={{ fontSize: 9, color: 'var(--c-text-muted)', mb: 0.5, px: 1, fontWeight: 700, textTransform: 'uppercase' }}>
                 Tune into peer stream:
               </Typography>
               {otherBroadcasts.map(b => (
@@ -2467,14 +2467,14 @@ export function MediaSyncDock({
                     p: 0.75,
                     borderRadius: 1.5,
                     cursor: 'pointer',
-                    '&:hover': { bgcolor: 'rgba(168, 85, 247, 0.15)' },
+                    '&:hover': { bgcolor: 'var(--c-primary-soft)' },
                   }}
                 >
                   <Box sx={{ overflow: 'hidden' }}>
-                    <Typography sx={{ fontSize: 11, fontWeight: 600, color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <Typography sx={{ fontSize: 11, fontWeight: 600, color: 'var(--c-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {b.title}
                     </Typography>
-                    <Typography sx={{ fontSize: 9, color: '#a855f7' }}>
+                    <Typography sx={{ fontSize: 9, color: 'var(--c-primary)' }}>
                       Host: {b.hostName} · {b.playing ? '▶ Live' : '⏸ Paused'}
                     </Typography>
                   </Box>
@@ -2485,8 +2485,8 @@ export function MediaSyncDock({
                       fontSize: 9,
                       fontWeight: 700,
                       textTransform: 'none',
-                      color: '#c084fc',
-                      bgcolor: 'rgba(168, 85, 247, 0.15)',
+                      color: 'var(--c-primary-strong)',
+                      bgcolor: 'var(--c-primary-soft)',
                       py: 0.25,
                       px: 1,
                     }}
@@ -2507,7 +2507,7 @@ export function MediaSyncDock({
                   sx={{
                     fontSize: 12,
                     fontWeight: 700,
-                    color: '#f8fafc',
+                    color: 'var(--c-text)',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -2518,17 +2518,17 @@ export function MediaSyncDock({
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 0.5 }}>
                   {currentBroadcast.loop && (
-                    <Chip size="small" label="Loop" sx={{ height: 16, fontSize: 8, bgcolor: 'rgba(168,85,247,0.2)', color: '#c084fc' }} />
+                    <Chip size="small" label="Loop" sx={{ height: 16, fontSize: 8, bgcolor: 'var(--c-primary-soft)', color: 'var(--c-primary-strong)' }} />
                   )}
                   {currentBroadcast.autoPlayNext && (
-                    <Chip size="small" label="AutoPlay" sx={{ height: 16, fontSize: 8, bgcolor: 'rgba(59,130,246,0.2)', color: '#60a5fa' }} />
+                    <Chip size="small" label="AutoPlay" sx={{ height: 16, fontSize: 8, bgcolor: 'rgba(59,130,246,0.2)', color: 'var(--c-info)' }} />
                   )}
                 </Box>
               </Box>
 
               {/* Progress Slider (Zero-lag) */}
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Typography sx={{ fontSize: 10, color: '#94a3b8', minWidth: 30, fontVariantNumeric: 'tabular-nums' }}>
+                <Typography sx={{ fontSize: 10, color: 'var(--c-text-muted)', minWidth: 30, fontVariantNumeric: 'tabular-nums' }}>
                   {formatTime(localProgress)}
                 </Typography>
                 <Slider
@@ -2540,12 +2540,12 @@ export function MediaSyncDock({
                   onChangeCommitted={handleSeekCommit}
                   disabled={!isHost} // Only host seeks for everyone
                   sx={{
-                    color: '#a855f7',
+                    color: 'var(--c-primary)',
                     height: 4,
                     '& .MuiSlider-thumb': { width: 10, height: 10 },
                   }}
                 />
-                <Typography sx={{ fontSize: 10, color: '#94a3b8', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                <Typography sx={{ fontSize: 10, color: 'var(--c-text-muted)', minWidth: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                   {formatTime(duration)}
                 </Typography>
               </Box>
@@ -2559,7 +2559,7 @@ export function MediaSyncDock({
                       <IconButton
                         size="small"
                         onClick={() => handleSeekCommit(null, Math.max(0, localProgress - 10))}
-                        sx={{ color: '#94a3b8', p: 0.75, '&:hover': { color: '#f8fafc' } }}
+                        sx={{ color: 'var(--c-text-muted)', p: 0.75, '&:hover': { color: 'var(--c-text)' } }}
                       >
                         <FastRewind sx={{ fontSize: 19 }} />
                       </IconButton>
@@ -2576,9 +2576,9 @@ export function MediaSyncDock({
                             }
                           }}
                           sx={{
-                            color: '#c084fc',
+                            color: 'var(--c-primary-strong)',
                             p: 0.75,
-                            '&:hover': { color: '#e879f9', bgcolor: 'rgba(168,85,247,0.15)' },
+                            '&:hover': { color: 'var(--c-accent)', bgcolor: 'var(--c-primary-soft)' },
                           }}
                         >
                           <SkipPrevious sx={{ fontSize: 21 }} />
@@ -2600,11 +2600,11 @@ export function MediaSyncDock({
                           fontWeight: 700,
                           textTransform: 'none',
                           borderRadius: 2.5,
-                          background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
-                          boxShadow: '0 4px 14px rgba(168,85,247,0.4)',
+                          background: 'linear-gradient(135deg, var(--c-primary) 0%, var(--c-accent) 100%)',
+                          boxShadow: '0 4px 14px var(--c-primary-soft)',
                           '&:hover': {
-                            background: 'linear-gradient(135deg, #9333ea 0%, #4f46e5 100%)',
-                            boxShadow: '0 6px 18px rgba(168,85,247,0.55)',
+                            background: 'linear-gradient(135deg, var(--c-primary-strong) 0%, var(--c-accent) 100%)',
+                            boxShadow: '0 6px 18px var(--c-primary-soft)',
                           },
                         }}
                       >
@@ -2623,9 +2623,9 @@ export function MediaSyncDock({
                             }
                           }}
                           sx={{
-                            color: '#c084fc',
+                            color: 'var(--c-primary-strong)',
                             p: 0.75,
-                            '&:hover': { color: '#e879f9', bgcolor: 'rgba(168,85,247,0.15)' },
+                            '&:hover': { color: 'var(--c-accent)', bgcolor: 'var(--c-primary-soft)' },
                           }}
                         >
                           <SkipNext sx={{ fontSize: 21 }} />
@@ -2638,7 +2638,7 @@ export function MediaSyncDock({
                       <IconButton
                         size="small"
                         onClick={() => handleSeekCommit(null, localProgress + 10)}
-                        sx={{ color: '#94a3b8', p: 0.75, '&:hover': { color: '#f8fafc' } }}
+                        sx={{ color: 'var(--c-text-muted)', p: 0.75, '&:hover': { color: 'var(--c-text)' } }}
                       >
                         <FastForward sx={{ fontSize: 19 }} />
                       </IconButton>
@@ -2651,7 +2651,7 @@ export function MediaSyncDock({
                       <IconButton
                         size="small"
                         onClick={() => handlePeerSkip(-10)}
-                        sx={{ color: '#94a3b8', p: 0.6, '&:hover': { color: '#f8fafc' } }}
+                        sx={{ color: 'var(--c-text-muted)', p: 0.6, '&:hover': { color: 'var(--c-text)' } }}
                       >
                         <FastRewind sx={{ fontSize: 19 }} />
                       </IconButton>
@@ -2669,10 +2669,10 @@ export function MediaSyncDock({
                           fontWeight: 700,
                           textTransform: 'none',
                           borderRadius: 2,
-                          color: '#c084fc',
-                          borderColor: 'rgba(168,85,247,0.4)',
-                          bgcolor: 'rgba(168,85,247,0.08)',
-                          '&:hover': { bgcolor: 'rgba(168,85,247,0.2)', borderColor: '#c084fc' },
+                          color: 'var(--c-primary-strong)',
+                          borderColor: 'var(--c-primary)',
+                          bgcolor: 'var(--c-primary-soft)',
+                          '&:hover': { bgcolor: 'var(--c-primary-soft)', borderColor: 'var(--c-primary-strong)' },
                         }}
                       >
                         Sync to Host
@@ -2703,7 +2703,7 @@ export function MediaSyncDock({
                       <IconButton
                         size="small"
                         onClick={() => handlePeerSkip(10)}
-                        sx={{ color: '#94a3b8', p: 0.6, '&:hover': { color: '#f8fafc' } }}
+                        sx={{ color: 'var(--c-text-muted)', p: 0.6, '&:hover': { color: 'var(--c-text)' } }}
                       >
                         <FastForward sx={{ fontSize: 19 }} />
                       </IconButton>
@@ -2738,11 +2738,11 @@ export function MediaSyncDock({
                           fontWeight: 700,
                           textTransform: 'none',
                           borderRadius: 1.75,
-                          color: isLocallyPaused ? '#4ade80' : '#f87171',
+                          color: isLocallyPaused ? 'var(--c-success)' : '#f87171',
                           borderColor: isLocallyPaused ? 'rgba(74, 222, 128, 0.4)' : 'rgba(248, 113, 113, 0.4)',
                           bgcolor: isLocallyPaused ? 'rgba(74, 222, 128, 0.1)' : 'rgba(248, 113, 113, 0.08)',
                           '&:hover': {
-                            borderColor: isLocallyPaused ? '#4ade80' : '#f87171',
+                            borderColor: isLocallyPaused ? 'var(--c-success)' : '#f87171',
                             bgcolor: isLocallyPaused ? 'rgba(74, 222, 128, 0.18)' : 'rgba(248, 113, 113, 0.15)',
                           },
                         }}
@@ -2753,15 +2753,15 @@ export function MediaSyncDock({
                   ) : (
                     <Chip
                       size="small"
-                      icon={<Headphones sx={{ fontSize: 12, color: '#c084fc !important' }} />}
+                      icon={<Headphones sx={{ fontSize: 12, color: 'var(--c-primary-strong) !important' }} />}
                       label={`Tuned into ${currentBroadcast.hostName}`}
                       sx={{
                         height: 20,
                         fontSize: 9,
                         fontWeight: 600,
-                        bgcolor: 'rgba(168,85,247,0.1)',
-                        color: '#cbd5e1',
-                        border: '1px solid rgba(168,85,247,0.2)',
+                        bgcolor: 'var(--c-primary-soft)',
+                        color: 'var(--c-text)',
+                        border: '1px solid var(--c-border-strong)',
                       }}
                     />
                   )}
@@ -2786,11 +2786,11 @@ export function MediaSyncDock({
                           fontSize: 9,
                           fontWeight: 700,
                           fontVariantNumeric: 'tabular-nums',
-                          bgcolor: 'rgba(255,255,255,0.04)',
-                          border: '1px solid rgba(255,255,255,0.1)',
+                          bgcolor: 'var(--c-surface2)',
+                          border: '1px solid var(--c-border)',
                           color: isDesyncedByChoice || syncDrift === null
-                            ? '#fbbf24'
-                            : Math.abs(syncDrift) < 0.15 ? '#4ade80' : Math.abs(syncDrift) < 0.5 ? '#fbbf24' : '#f87171',
+                            ? 'var(--c-warning)'
+                            : Math.abs(syncDrift) < 0.15 ? 'var(--c-success)' : Math.abs(syncDrift) < 0.5 ? 'var(--c-warning)' : '#f87171',
                         }}
                       />
                     </Tooltip>
@@ -2807,11 +2807,11 @@ export function MediaSyncDock({
                         onClick={onToggleLoop}
                         sx={{
                           p: 0.5,
-                          color: currentBroadcast.loop ? '#c084fc' : '#64748b',
-                          bgcolor: currentBroadcast.loop ? 'rgba(168,85,247,0.2)' : 'transparent',
+                          color: currentBroadcast.loop ? 'var(--c-primary-strong)' : 'var(--c-text-faint)',
+                          bgcolor: currentBroadcast.loop ? 'var(--c-primary-soft)' : 'transparent',
                           borderRadius: 1.5,
-                          border: currentBroadcast.loop ? '1px solid rgba(168,85,247,0.4)' : '1px solid transparent',
-                          '&:hover': { color: '#c084fc', bgcolor: 'rgba(168,85,247,0.15)' },
+                          border: currentBroadcast.loop ? '1px solid var(--c-border-strong)' : '1px solid transparent',
+                          '&:hover': { color: 'var(--c-primary-strong)', bgcolor: 'var(--c-primary-soft)' },
                         }}
                       >
                         <Repeat sx={{ fontSize: 16 }} />
@@ -2827,11 +2827,11 @@ export function MediaSyncDock({
                         onClick={onToggleAutoPlayNext}
                         sx={{
                           p: 0.5,
-                          color: currentBroadcast.autoPlayNext ? '#60a5fa' : '#64748b',
+                          color: currentBroadcast.autoPlayNext ? 'var(--c-info)' : 'var(--c-text-faint)',
                           bgcolor: currentBroadcast.autoPlayNext ? 'rgba(59,130,246,0.2)' : 'transparent',
                           borderRadius: 1.5,
                           border: currentBroadcast.autoPlayNext ? '1px solid rgba(59,130,246,0.4)' : '1px solid transparent',
-                          '&:hover': { color: '#60a5fa', bgcolor: 'rgba(59,130,246,0.15)' },
+                          '&:hover': { color: 'var(--c-info)', bgcolor: 'rgba(59,130,246,0.15)' },
                         }}
                       >
                         <QueueMusic sx={{ fontSize: 16 }} />
@@ -2845,18 +2845,18 @@ export function MediaSyncDock({
                       display: 'flex',
                       alignItems: 'center',
                       gap: 0.5,
-                      bgcolor: 'rgba(255,255,255,0.03)',
+                      bgcolor: 'var(--c-surface2)',
                       px: 0.75,
                       py: 0.25,
                       borderRadius: 1.75,
-                      border: '1px solid rgba(255,255,255,0.07)',
+                      border: '1px solid var(--c-border)',
                     }}
                   >
                     <Tooltip title={isMuted ? 'Unmute' : 'Mute'}>
                       <IconButton
                         size="small"
                         onClick={() => setIsMuted(!isMuted)}
-                        sx={{ color: isMuted ? '#ef4444' : '#94a3b8', p: 0.25, '&:hover': { color: '#f8fafc' } }}
+                        sx={{ color: isMuted ? '#ef4444' : 'var(--c-text-muted)', p: 0.25, '&:hover': { color: 'var(--c-text)' } }}
                       >
                         {isMuted || volume === 0 ? <VolumeOff sx={{ fontSize: 15 }} /> : <VolumeUp sx={{ fontSize: 15 }} />}
                       </IconButton>
@@ -2874,7 +2874,7 @@ export function MediaSyncDock({
                       }}
                       sx={{
                         width: 55,
-                        color: '#a855f7',
+                        color: 'var(--c-primary)',
                         height: 3,
                         '& .MuiSlider-thumb': { width: 8, height: 8 },
                       }}
@@ -2887,10 +2887,10 @@ export function MediaSyncDock({
             // Screen share only (no synced media broadcast)
             <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
               <Box sx={{ minWidth: 0 }}>
-                <Typography sx={{ fontSize: 12, color: '#f8fafc', fontWeight: 700 }}>
+                <Typography sx={{ fontSize: 12, color: 'var(--c-text)', fontWeight: 700 }}>
                   {isScreenSharing ? '🔴 You are sharing your screen' : `🖥️ ${screenShareHostName || 'A peer'} is sharing`}
                 </Typography>
-                <Typography sx={{ fontSize: 10, color: '#94a3b8' }}>
+                <Typography sx={{ fontSize: 10, color: 'var(--c-text-muted)' }}>
                   {isScreenSharing ? 'Video + audio relayed peer-to-peer over the local network' : 'Live over the local network — no internet needed'}
                 </Typography>
               </Box>
@@ -2899,7 +2899,7 @@ export function MediaSyncDock({
                   <IconButton
                     size="small"
                     onClick={() => setIsMuted(!isMuted)}
-                    sx={{ color: isMuted ? '#ef4444' : '#94a3b8', p: 0.25 }}
+                    sx={{ color: isMuted ? '#ef4444' : 'var(--c-text-muted)', p: 0.25 }}
                   >
                     {isMuted || volume === 0 ? <VolumeOff sx={{ fontSize: 15 }} /> : <VolumeUp sx={{ fontSize: 15 }} />}
                   </IconButton>
@@ -2914,7 +2914,7 @@ export function MediaSyncDock({
                       setVolume(nextVal);
                       if (isMuted && nextVal > 0) setIsMuted(false);
                     }}
-                    sx={{ width: 60, color: '#a855f7', height: 3, '& .MuiSlider-thumb': { width: 8, height: 8 } }}
+                    sx={{ width: 60, color: 'var(--c-primary)', height: 3, '& .MuiSlider-thumb': { width: 8, height: 8 } }}
                   />
                 </Box>
               )}
@@ -2922,10 +2922,10 @@ export function MediaSyncDock({
           ) : (
             // No stream playing state
             <Box sx={{ p: 2, textAlign: 'center' }}>
-              <Typography sx={{ fontSize: 12, color: '#cbd5e1', fontWeight: 600, mb: 0.5 }}>
+              <Typography sx={{ fontSize: 12, color: 'var(--c-text)', fontWeight: 600, mb: 0.5 }}>
                 No active stream in room
               </Typography>
-              <Typography sx={{ fontSize: 10, color: '#64748b' }}>
+              <Typography sx={{ fontSize: 10, color: 'var(--c-text-faint)' }}>
                 Paste a YouTube link, pick a local music/video file, or share your screen — local files and screen share work without internet.
               </Typography>
             </Box>
@@ -2940,7 +2940,7 @@ export function MediaSyncDock({
               alignItems: 'center',
               justifyContent: 'space-between',
               gap: 1,
-              borderTop: '1px solid rgba(255,255,255,0.05)',
+              borderTop: '1px solid var(--c-border)',
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
@@ -2959,7 +2959,7 @@ export function MediaSyncDock({
                   </Box>
                 }
               >
-                <IconButton size="small" sx={{ p: 0.5, color: '#64748b', '&:hover': { color: '#f8fafc' } }}>
+                <IconButton size="small" sx={{ p: 0.5, color: 'var(--c-text-faint)', '&:hover': { color: 'var(--c-text)' } }}>
                   <Keyboard sx={{ fontSize: 16 }} />
                 </IconButton>
               </Tooltip>
@@ -2982,7 +2982,7 @@ export function MediaSyncDock({
                       textTransform: 'none',
                       borderRadius: 1.75,
                       whiteSpace: 'nowrap',
-                      background: 'linear-gradient(135deg, #a855f7 0%, #6366f1 100%)',
+                      background: 'linear-gradient(135deg, var(--c-primary) 0%, var(--c-accent) 100%)',
                       mr: 0.5,
                     }}
                   >
@@ -3025,7 +3025,7 @@ export function MediaSyncDock({
                       variant="outlined"
                       onClick={handleToggleScreenShare}
                       disabled={isStartingShare}
-                      startIcon={isStartingShare ? <CircularProgress size={12} sx={{ color: '#c084fc' }} /> : <ScreenShare sx={{ fontSize: 15 }} />}
+                      startIcon={isStartingShare ? <CircularProgress size={12} sx={{ color: 'var(--c-primary-strong)' }} /> : <ScreenShare sx={{ fontSize: 15 }} />}
                       sx={{
                         px: 1.25,
                         py: 0.35,
@@ -3034,9 +3034,9 @@ export function MediaSyncDock({
                         textTransform: 'none',
                         borderRadius: 1.75,
                         whiteSpace: 'nowrap',
-                        color: '#c084fc',
-                        borderColor: 'rgba(168,85,247,0.4)',
-                        '&:hover': { borderColor: '#c084fc', bgcolor: 'rgba(168,85,247,0.12)' },
+                        color: 'var(--c-primary-strong)',
+                        borderColor: 'var(--c-primary)',
+                        '&:hover': { borderColor: 'var(--c-primary-strong)', bgcolor: 'var(--c-primary-soft)' },
                       }}
                     >
                       {isHost && currentBroadcast?.mediaType === 'youtube' ? 'Screen' : '🖥️ Share Screen'}
@@ -3049,7 +3049,7 @@ export function MediaSyncDock({
           </Box>
 
           {/* CLEAN UNCLUTTERED URL BROADCAST INPUT (No default songs) */}
-          <Box sx={{ px: 2, pb: 2, pt: 0.5, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+          <Box sx={{ px: 2, pb: 2, pt: 0.5, borderTop: '1px solid var(--c-border)' }}>
             <form onSubmit={handleStartNewStream}>
               <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
                 <Box
@@ -3061,15 +3061,15 @@ export function MediaSyncDock({
                     px: 1.25,
                     py: 0.6,
                     borderRadius: 1.5,
-                    bgcolor: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    bgcolor: 'var(--c-surface2)',
+                    border: '1px solid var(--c-border)',
                     '&:focus-within': {
-                      borderColor: '#a855f7',
-                      boxShadow: '0 0 0 1px #a855f7',
+                      borderColor: 'var(--c-primary)',
+                      boxShadow: '0 0 0 1px var(--c-primary)',
                     },
                   }}
                 >
-                  <LinkIcon sx={{ fontSize: 14, color: '#94a3b8' }} />
+                  <LinkIcon sx={{ fontSize: 14, color: 'var(--c-text-muted)' }} />
                   <input
                     type="text"
                     placeholder="Paste YouTube / media link…"
@@ -3080,7 +3080,7 @@ export function MediaSyncDock({
                       background: 'transparent',
                       border: 'none',
                       outline: 'none',
-                      color: '#f8fafc',
+                      color: 'var(--c-text)',
                       fontSize: 11,
                       fontFamily: 'inherit',
                     }}
@@ -3092,7 +3092,7 @@ export function MediaSyncDock({
                   size="small"
                   disabled={!urlInput.trim()}
                   sx={{
-                    bgcolor: '#a855f7',
+                    bgcolor: 'var(--c-primary)',
                     color: '#fff',
                     fontWeight: 700,
                     fontSize: 10,
@@ -3101,7 +3101,7 @@ export function MediaSyncDock({
                     py: 0.6,
                     px: 1.25,
                     whiteSpace: 'nowrap',
-                    '&:hover': { bgcolor: '#9333ea' },
+                    '&:hover': { bgcolor: 'var(--c-primary-strong)' },
                   }}
                 >
                   Broadcast
@@ -3113,10 +3113,10 @@ export function MediaSyncDock({
                       size="small"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={isUploading}
-                      startIcon={isUploading ? <CircularProgress size={11} sx={{ color: '#c084fc' }} /> : <UploadFile sx={{ fontSize: 14 }} />}
+                      startIcon={isUploading ? <CircularProgress size={11} sx={{ color: 'var(--c-primary-strong)' }} /> : <UploadFile sx={{ fontSize: 14 }} />}
                       sx={{
-                        color: '#c084fc',
-                        borderColor: 'rgba(168,85,247,0.4)',
+                        color: 'var(--c-primary-strong)',
+                        borderColor: 'var(--c-primary)',
                         fontWeight: 700,
                         fontSize: 10,
                         textTransform: 'none',
@@ -3125,7 +3125,7 @@ export function MediaSyncDock({
                         px: 1,
                         whiteSpace: 'nowrap',
                         '& .MuiButton-startIcon': { mr: 0.5 },
-                        '&:hover': { borderColor: '#c084fc', bgcolor: 'rgba(168,85,247,0.12)' },
+                        '&:hover': { borderColor: 'var(--c-primary-strong)', bgcolor: 'var(--c-primary-soft)' },
                       }}
                     >
                       📁 File
@@ -3137,17 +3137,17 @@ export function MediaSyncDock({
             {isUploading && (
               <Box sx={{ mt: 1 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.25 }}>
-                  <Typography sx={{ fontSize: 9, color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }}>
+                  <Typography sx={{ fontSize: 9, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }}>
                     Uploading {uploadLabel} to the local server…
                   </Typography>
-                  <Typography sx={{ fontSize: 9, color: '#c084fc', fontVariantNumeric: 'tabular-nums' }}>
+                  <Typography sx={{ fontSize: 9, color: 'var(--c-primary-strong)', fontVariantNumeric: 'tabular-nums' }}>
                     {Math.round(uploadProgress * 100)}%
                   </Typography>
                 </Box>
                 <LinearProgress
                   variant={uploadProgress > 0 ? 'determinate' : 'indeterminate'}
                   value={uploadProgress * 100}
-                  sx={{ height: 4, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.08)', '& .MuiLinearProgress-bar': { bgcolor: '#a855f7' } }}
+                  sx={{ height: 4, borderRadius: 2, bgcolor: 'var(--c-surface2)', '& .MuiLinearProgress-bar': { bgcolor: 'var(--c-primary)' } }}
                 />
               </Box>
             )}
@@ -3169,10 +3169,10 @@ export function MediaSyncDock({
             px: 1.5,
             py: 0.75,
             borderRadius: 2,
-            bgcolor: 'rgba(17,24,39,0.96)',
-            border: '1px solid rgba(168,85,247,0.45)',
+            bgcolor: 'var(--c-surface)',
+            border: '1px solid var(--c-border-strong)',
             boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
-            color: '#f8fafc',
+            color: 'var(--c-text)',
             fontSize: 11,
             fontWeight: 600,
             textAlign: 'center',

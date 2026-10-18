@@ -1,23 +1,200 @@
-# Updates — Watch Party (Media Sync) for canvas-crdt
+# Updates — canvas-crdt
 
-This file summarises everything in this local copy that is **not yet on GitHub**
-(`kevincell/canvas-crdt`, last pushed commit `ba96be1` — "Fixed text overlap issue", 2 Oct 2026).
+Everything in this version compared with the last state on GitHub (`kevincell/canvas-crdt`).
+Two big pieces of work:
 
-Local commits not yet pushed:
+1. **Watch Party** — synced music / video / screen sharing (already described in the previous UPDATES.md, kept
+   below in Part B and updated).
+2. **Board & rooms rebuild** (new in this update, Part A) — new canvas and tools, rooms with multiple boards,
+   join approval, voting, locks, checkpoints, conflict log, comments, day / night theme, and a lot of
+   features removed to keep the app focused.
 
-| Commit | Description |
-|---|---|
-| `4da88ab` | BACKUP: first Watch Party version (YouTube sync, wide/full-screen overlay with auto-hide) |
-| `f8c349b` | Offline file streaming, screen/relay share, captions & speed, peer skip, precise sync, YouTube-to-file switch fix |
+The CRDT engine (`packages/engine`) — union-bounding-box merge, intent-ambiguity detection and conflict
+resolution — is **unchanged**. Shapes keep the same format, so old boards still open.
 
-The canvas itself (drawing, shapes, CRDT engine, conflict handling) is **unchanged**. All changes are in the
-Watch Party feature, participant tracking, and the Node server.
+For a short list of what was added / removed see **CHANGES.md**. For how to run it see **RUN_GUIDE.md**.
 
 ---
 
-## 1. What's new for users
+# Part A — Board & rooms rebuild (new)
 
-### Watch Party dock (new feature — not on GitHub at all yet)
+## A1. Rooms, boards and people
+
+### Rooms
+- **Home screen**: your name, pointer & laser colour, **Create a room** (name + description),
+  **Join a room** (room ID or a pasted link), and **Your rooms** (rooms you created or joined before).
+- A room has its own shared Yjs document `<roomId>::room` holding: room info, members, declined requests,
+  the list of boards, votes, room chat and the Watch Party channels.
+- Creating a room makes you the **host** and creates **one empty board** ("Board 1").
+- The address bar always shows `?room=<id>&board=<id>`, so refreshing or copying the URL reopens the same board.
+
+### Join approval (basic — not a security feature)
+- Someone joining sees **"Waiting to join"** until an approved member presses **Allow** or **Decline**.
+- **Any approved member** can answer, not only the host — so it works when the host is offline.
+- Requests appear as a pop-up card on the board and in Room details (with a red counter on its icon).
+- The waiting screen tells the joiner what is happening: how many members are online, "no member online yet",
+  "can't reach the signalling server", or "this browser is already in the room in another tab".
+- Declined → *Ask again*. Removed (kicked) → *Ask to rejoin*. Both need approval again.
+- People who were already approved go straight back in.
+
+### People / identity
+- **One browser = one person.** Each browser gets a permanent device ID (stored locally). Your name is just a
+  label: renaming yourself on the same browser updates your member entry instead of creating a new person.
+- Several tabs of the same browser count as **one** person (one entry in counts and lists, your own other tabs
+  don't show as extra cursors).
+- Different browsers, incognito windows or other devices are different people.
+- **Test mode:** opening a tab with `?guest=1` gives that tab its own separate identity, so you can test as a
+  second person in the same browser.
+
+### Room details panel (top right)
+- Room name, description (editable by the host), **room ID** with copy button, host name, connection info.
+- **People**: everyone with their **pointer-colour dot**, online / last-seen, who approved them, host badge.
+  Viewers (view-only link) and removed people are listed separately.
+- **Host**: kick a member (their drawings stay), start a **Delete room** vote.
+- **Everyone**: **Leave room** (if the host leaves, the host role passes to the longest-standing member).
+- **Boards**: list with name, description, creator; open, rename (creator), delete (creator → vote);
+  **New board** creates another empty board without touching the others.
+- **Votes**: open votes with progress bars and an *Agree* button; recent results.
+
+### "You" menu (avatar, top right)
+- Change your name, pointer & laser colour, switch day / night.
+- **Rooms you've joined** — click one to switch rooms. Home button.
+
+### Sharing
+- **Share** gives two links (using the LAN address so other devices can open them):
+  - **View only** (`&view=1`): just the live drawing — no toolbar, no editing, no approval needed.
+  - **Edit**: full tools; the person waits for approval.
+
+### Multiple boards
+- Board switcher next to the room name (dropdown) + **New board** dialog (name & description).
+- Each board is its own Yjs document `<roomId>::b::<boardId>` stored in IndexedDB.
+- Boards made before rooms existed are adopted automatically as the room's first board.
+
+## A2. Canvas and tools
+
+New canvas (`features/board/BoardCanvas.tsx`) replaces the old renderer/controller — fixes the select-tool
+glitch, draws everything with one renderer (`render.ts`) that is also used for exports and previews.
+
+| Tool | Key | Behaviour |
+|---|---|---|
+| Select (cursor) | V | Click to select one object, drag to move, round handles to resize, Shift-click to add. Drag empty space to pan. |
+| Hand (box select) | H | Drag a translucent blue box (like Windows) → selects everything it touches. Drag inside the box to move the whole group, drag its corners to resize the group. |
+| Pen | P | Freehand, smoothed, one line style (brush textures removed). |
+| Line / arrow | L | Straight line: no arrow, arrow at end, or both ends. Ends attach to shapes and follow them. |
+| Rectangle | R | Shift = square. Pointed or rounded corners. |
+| Ellipse | O | Shift = circle. |
+| Text box | T | Click or drag a box and type. Fonts: **Arial** and **Times New Roman**. Double-click to edit. |
+| Image | I | Click to place, or drop / paste an image. |
+| Fill | F | Fills a closed shape: rectangle, ellipse, text box, or a pen shape whose ends meet. |
+| Eraser | E | **Partial** erase of pen strokes, like a pencil eraser — sizes **S / M / L**. |
+| Delete | D | Deletes a whole object. |
+| Laser | K | Glowing tip with a fading tail in your pointer colour; others see it live; nothing is saved. |
+
+- **Tool options strip** next to the toolbar: colour (8 calm colours + custom), thickness, line style,
+  opacity, arrow type, font & size, eraser size.
+- **Line styles**: solid, dashed, dots with small gaps, dots with long gaps.
+- **Selection bar** (floats above the selection, like Word's mini toolbar): colour, fill / no fill,
+  thickness, line style, corners, opacity, font & size, **− / +** resize, comment, lock / unlock, delete.
+  With the hand tool and an empty or full box: **Text box** turns the box into a text box of the same size.
+- **Zoom**: mouse wheel, pinch, or the **+ / −** buttons bottom-right (1:1 and fit buttons removed).
+- Pan: Space + drag, right / middle drag, or drag empty space with the cursor tool.
+- Shortcuts: Ctrl+Z / Ctrl+Y, Delete, Ctrl+A, Esc.
+- Drags are previewed instantly and written to the shared document in small batches.
+- Dark ink is shown light on the night canvas (and very light ink dark by day) so drawings stay visible for
+  peers using the other theme.
+
+## A3. Locks and votes (room governance)
+
+| Action | Who asks | Passes when |
+|---|---|---|
+| Delete a board | its creator | ≥ ¼ of active members agree |
+| Delete the room | host | ≥ ¼ of active members agree |
+| Unlock objects | anyone | > ½ of active members agree |
+| Delete locked objects | anyone | > ½ of active members agree |
+| Revert a board to a checkpoint | anyone | > ½ of active members agree |
+
+- **Lock** from the selection bar: locked objects can't be moved, resized, restyled or erased and show a 🔒 badge.
+- The person asking automatically votes yes. Asking the same thing again just adds your vote.
+- **Active members** = approved, not removed, seen in the last 7 days. Votes expire after 24 hours.
+- Every peer evaluates the same shared vote record, so the result is the same everywhere.
+- Unanswered votes pop up as small cards (Agree / Later) and are listed in Room details.
+- This governance layer sits on top of the CRDT — the conflict detection itself needs no voting.
+
+## A4. Checkpoints (replaces history playback)
+- When someone **starts editing**, the board is snapshotted (**START** checkpoint); when they stop for a minute
+  or leave the board, again (**END**). Auto-merges and reverts also create checkpoints.
+- Board-wide log with **name and time**; click one to see a **picture of the board** at that moment (enlargeable).
+- **Revert to here…** starts a > ½ vote; when it passes the board is restored in one step and a "Reverted"
+  checkpoint is logged.
+- Snapshots live inside the board document (synced, offline); images inside snapshots are stored once.
+
+## A5. Conflict log
+- New **Conflicts** panel (triangle icon) with a **red counter** of open conflicts.
+- Every entry: timestamp, type, **who caused it**, description, **BEFORE and AFTER snapshots** of the area.
+- Open conflicts get a **very transparent yellow outline** on the board until someone marks them **resolved**.
+- **Dismiss** hides the outline only for you (stored on your device); the counter stays until resolved.
+- Logged automatically:
+  - the engine's conflicts (edited at the same time, deleted while edited, …) — resolving them with the
+    floating Merge / Keep mine / Remote widget is unchanged and also marks the log entry resolved;
+  - union-bounding-box auto-merges (logged as already resolved, plus a merge checkpoint);
+  - **"Drawn over" rule (new)**: a new or moved object covering ≥ 30 % of someone else's object that was made or
+    edited in the last 10 minutes. Computed from shared state only, so every peer reaches the same result.
+
+## A6. Comments and chat
+- **Comments** replace sticky notes: select objects → comment. A 💬 pin with a count sits on commented objects;
+  the panel shows comments on the selection and all others, with "show on board".
+- Old sticky notes still display (as filled text boxes) so nothing is lost.
+- **Chat** stays for general talk and is now **room-wide** (same chat on every board of the room).
+
+## A7. Other panels
+- **Templates**: 2 demo layouts (Brainstorm, Simple flowchart) — added next to existing content.
+- **Export**: PNG or PDF of the whole board or the selection.
+- **About**: every icon with its name and a one-line meaning, plus shortcuts.
+- **Demo scenarios**: kept as a minimisable explainer; the scripted demos are switched off.
+
+## A8. Day / night theme
+- Per device (stored locally), toggle in the top bar, the You menu or the home screen.
+- **Day**: pastel café-and-garden palette — sage greens, latte browns, cream canvas.
+- **Night**: dark moss / bark tones, soft warm text — easy on the eyes but clearly readable.
+- Applied everywhere: home and waiting screens, header, toolbar, panels, dialogs, Watch Party dock, conflict widget.
+
+## A9. Watch Party changes in this update
+- The dock now belongs to the **room**: it keeps playing when you switch boards in the same room.
+- Going home or switching to another room stops anything you were hosting — nothing carries over to another room.
+- The minimised pill now always stays on top of panels so it can be dragged anywhere.
+- Restyled for day / night. Playback and sync behaviour are unchanged (Part B).
+
+## A10. Connection status
+- Top bar chip: **"N on this board"**, **"Online · only you here"** (signalling server reachable, nobody else yet),
+  or **"Offline · saved locally"** (server unreachable — edits are kept and merge when you reconnect).
+
+## A11. Removed
+Dual-peer split-screen mode · sticky notes (→ comments) · history playback / time-travel scrubber · merge lens ·
+brush textures · stencils · facilitation (timer, dot voting, retros) · task-tracker export · old share modal ·
+duplicate board · quick find · presentation mode · alignment guides / tidy / snapping · old checkpoints & comments ·
+Calibri font · 1:1 and fit zoom buttons · old templates (4 → 2) · old status panel / connection banner / presence menu.
+
+## A12. Files
+
+| Area | Files |
+|---|---|
+| New — app shell | `App.tsx` (routing), `main.tsx` (theme provider), `index.css`, `theme/theme.tsx`, `app/identity.ts`, `app/signaling.ts` |
+| New — views | `views/JoinScreen.tsx` (rewritten), `views/RoomScreen.tsx` (waiting / declined / removed screens, Watch Party host), `views/BoardView.tsx` |
+| New — board | `features/board/BoardCanvas.tsx`, `BoardToolbar.tsx`, `SelectionBar.tsx`, `ui.tsx`, `model.ts`, `geometry.ts`, `render.ts`, `useBoardLogs.ts` |
+| New — rooms | `features/room/useRoom.ts`, `features/room/roomTypes.ts` |
+| New — panels | `features/panels/RoomPanel.tsx`, `ProfileMenu.tsx`, `ShareDialog.tsx`, `ConflictsPanel.tsx`, `CheckpointsPanel.tsx`, `CommentsPanel.tsx`, `AboutPanel.tsx`, `SidePanel.tsx`, `SnapshotPreview.tsx` |
+| New — templates | `features/templates/boardTemplates.ts`, `TemplatesDialog.tsx` |
+| Modified | `features/chat/ChatPanel.tsx` (themed, room-wide), `features/demo/DemoShowcaseBar.tsx` (explainer only), `features/canvas/exportBoard.ts` (new renderer), `features/crdt/model/useCRDTOps.ts` (batch create / update / delete), `features/crdt/model/useCRDTConnection.ts` (device ID in presence), `features/crdt/model/useCRDTAwareness.ts` (one entry per browser), `features/crdt/ui/FloatingConflictWidget.tsx` (themed), `features/media/MediaSyncDock.tsx` (themed, pill on top), `hooks/useCanvasCRDT.ts` |
+| Deleted | `views/SingleCanvasView.tsx`, `features/canvas/{CanvasRenderer,CanvasController,Toolbar,boardDuplication,boardSnapshot}`, `features/demo/{DualPeerContainer,DemoTip}`, `features/crdt/{StatusPanel,PartitionSimulator}`, `features/crdt/ui/{TimeTravelScrubber,MergeLens,PresenceMenu,ConnectionBanner}`, `features/{stencils,facilitation,integrations,sharing,checkpoints,comments}/`, `features/templates/{TemplatesModal,curatedTemplates}`, `utils/audio.ts`, `features/canvas/__tests__/boardDuplication.test.ts` |
+| Docs | `README.md` (rewritten), `UPDATES.md` (this file), `CHANGES.md`, `RUN_GUIDE.md` |
+
+---
+
+# Part B — Watch Party (from the previous update, still valid)
+
+### Watch Party — features
+
+#### Watch Party dock
 A **🎬 Watch Party** button in the canvas top bar opens a floating media dock. One peer becomes the **host**
 and everyone else in the room is a **listener** who plays the same thing in sync.
 
@@ -39,7 +216,7 @@ and everyone else in the room is a **listener** who plays the same thing in sync
   `Space` play/pause · `↑/↓` volume ±10 % · `←/→` skip ∓10 s (host: everyone, listener: just you) · `Esc` exit.
 - **Multiple broadcasts** — if several peers broadcast, listeners can switch streams ("Tune In").
 
-### Sync accuracy (how peers stay together)
+#### Sync accuracy (how peers stay together)
 - **Shared clock** — every device measures its offset to the server clock (`/api/time`, best of 5 round trips,
   refreshed every 30 s), so laptops with wrong clocks on an offline hotspot still agree on time.
 - **Host heartbeat** — the host re-publishes its *real* player position whenever it drifts > 0.4–0.5 s
@@ -50,31 +227,7 @@ and everyone else in the room is a **listener** who plays the same thing in sync
   that leads slightly ahead to cover buffering, then verifies and self-tunes the lead per device.
 - Measured result on a test laptop: peers settle at about **±0.05 s** from the host.
 
----
-
-## 2. Files changed vs GitHub
-
-| File | Status | Summary |
-|---|---|---|
-| `apps/client/src/features/media/MediaSyncDock.tsx` | **new** | The whole Watch Party UI: YouTube + HTML5 players, host/listener controls, upload, subtitles, screen share & relay view, captions/speed menus, shortcuts, sync engine (lead-learning seeks, speed nudging, heartbeat), drift readout. |
-| `apps/client/src/features/media/useMediaSync.ts` | **new** | Broadcast state in the Yjs map `media-broadcasts`: start/stop/tune-in, play/pause/seek all, loop, autoplay, track changes, playback rate, subtitles, host heartbeat (`reanchor`), orphaned-host cleanup, clock sync. |
-| `apps/client/src/features/media/useScreenShare.ts` | **new** | WebRTC screen/tab + audio sharing. Signalling over the Yjs map `screen-share-signals` (works offline). Non-trickle ICE, one connection per viewer, stereo high-bitrate Opus for music, video bitrate cap, stale-sharer detection, "relay this tab" with Region Capture cropping. |
-| `apps/client/src/features/media/types.ts` | **new** | `PeerBroadcast` type, YouTube URL parsing, `calculateEffectiveTime`, shared clock (`serverNow`, `syncClockWithServer`), media-server URL resolution, SRT→VTT converter, speed list. |
-| `apps/client/src/features/media/index.ts` | **new** | Barrel exports. |
-| `apps/client/src/features/media/__tests__/mediaSync.test.ts` | **new** | Vitest: URL parsing, effective-time maths, two-peer Yjs convergence for play/pause/seek and playlist changes, no interference with canvas shapes. |
-| `apps/client/src/views/SingleCanvasView.tsx` | modified | Adds the Watch Party top-bar button + live indicator, mounts the dock, wires media sync + screen share, auto-opens the dock when someone shares their screen. "Leave Room" became **Exit Board** with a confirmation prompt. |
-| `apps/client/src/features/crdt/model/useCRDTAwareness.ts` | modified | Participants are rebuilt from the full awareness state on every update and **de-duplicated by name** (keeps the newest connection), and built immediately on mount. |
-| `apps/client/src/hooks/useCanvasCRDT.ts` | modified | `peerCount` now comes from the de-duplicated participant list instead of the raw WebRTC peer count. |
-| `apps/server/src/index.ts` | modified | New endpoints (below). Fixed ESM `__dirname` crash. CORS updated for uploads/Range. |
-| `.gitignore` | modified | Ignores `apps/server/uploads/`. |
-
-> Tip: `git diff --stat origin/main` shows much bigger numbers for `SingleCanvasView.tsx`, `index.ts` and
-> `.gitignore` because Windows changed their line endings (LF→CRLF). Use
-> `git diff --stat --ignore-cr-at-eol origin/main` to see only the real changes.
-
----
-
-## 3. Server API additions (`apps/server/src/index.ts`, port 3001)
+### Server API (`apps/server/src/index.ts`, port 3001)
 
 | Method & path | Purpose |
 |---|---|
@@ -87,9 +240,7 @@ and everyone else in the room is a **listener** who plays the same thing in sync
 - The broadcast stores a relative path (`/api/media/<id>`); each peer resolves it against its own route to the
   server, so it works for the host (localhost) and for hotspot peers (LAN IP) alike.
 
----
-
-## 4. Bugs fixed along the way
+### Watch Party bugs fixed
 - Server crashed on start in ESM mode (`__dirname` is undefined) → uses `import.meta.url`.
 - Upload buffered the whole file in RAM → now streamed to disk.
 - Non-ASCII file names broke uploads → names are URI-encoded in the header.
@@ -102,15 +253,8 @@ and everyone else in the room is a **listener** who plays the same thing in sync
 
 ---
 
-## 5. How to run
+## How to run
+See **RUN_GUIDE.md**.
 
-```cmd
-cd canvas-crdt
-npm run dev
-```
-
-- Host laptop: open **http://localhost:5173** (screen share / relay only work on localhost or https).
-- Other devices on the same Wi-Fi / hotspot: open **http://&lt;host-LAN-IP&gt;:5173**.
-- Windows Firewall must allow ports **5173** and **3001**.
-- Screen share / relay: in Chrome's picker tick **"Share tab audio"** (or "Share system audio").
-- Some MKV files (HEVC video / DTS audio) won't play in browsers — re-encode to MP4 if needed.
+> Tip: `git diff --stat` may show huge numbers for some files because Windows changed their line endings
+> (LF → CRLF). Use `git diff --stat --ignore-cr-at-eol` to see only the real changes.

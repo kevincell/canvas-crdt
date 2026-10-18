@@ -19,6 +19,8 @@ export interface CanvasHooks {
   // Connection
   connected: boolean;
   peerCount: number;
+  webrtcPeerCount: number;
+  bcPeerCount: number;
   roomId: string;
   localIP: string;
   connectionState: ConnectionState;
@@ -49,6 +51,9 @@ export interface CanvasHooks {
   createNote: (x: number, y: number, text: string, color: string, bgColor: string) => string | null;
   updateShape: (id: string, data: Partial<any>, op?: EditOp, skipHistory?: boolean) => void;
   deleteShape: (id: string) => void;
+  createShape: (kind: any, data: Partial<any>) => string | null;
+  updateShapes: (updates: Array<{ id: string; data: Partial<any>; op?: EditOp }>, skipHistory?: boolean) => void;
+  deleteShapes: (ids: string[]) => void;
   setCursor: (x: number, y: number) => void;
   setParticipantName: (name: string) => void;
   setLaserPoints: (points: { x: number; y: number }[] | null) => void;
@@ -107,6 +112,9 @@ export function useCanvasCRDT(
       createNote: () => null,
       updateShape: () => {},
       deleteShape: () => {},
+      createShape: () => null,
+      updateShapes: () => {},
+      deleteShapes: () => {},
       commitShapeHistory: () => {},
       commitShapeHistoryBatch: () => {},
       resolveConflict: () => {},

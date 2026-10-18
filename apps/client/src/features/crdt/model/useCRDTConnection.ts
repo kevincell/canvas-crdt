@@ -5,6 +5,7 @@ import { IndexeddbPersistence } from 'y-indexeddb';
 import { Awareness } from 'y-protocols/awareness';
 import { CURRENT_BOARD_SCHEMA_VERSION, migrateBoardDocument } from '@crdt-canvas/engine';
 import { deleteMigrationBackup, getMigrationBackup, saveMigrationBackup } from '../../canvas/migrationRecovery';
+import { getDeviceId } from '../../../app/identity';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'syncing' | 'offline';
 export type PersistenceState = 'loading' | 'ready' | 'error' | 'migration-error';
@@ -20,6 +21,10 @@ export interface CRDTConnection {
   migrationBackupAvailable: boolean;
   connected: boolean;
   peerCount: number;
+  /** Live data links: direct WebRTC connections to other devices */
+  webrtcPeerCount: number;
+  /** Live data links: other tabs of this same browser (BroadcastChannel) */
+  bcPeerCount: number;
   roomId: string;
   localIP: string;
   offlineMode: boolean;
@@ -44,6 +49,8 @@ export function useCRDTConnection(
   const [migrationBackupAvailable, setMigrationBackupAvailable] = useState(false);
   const [connected, setConnected] = useState(false);
   const [peerCount, setPeerCount] = useState(0);
+  const [webrtcPeerCount, setWebrtcPeerCount] = useState(0);
+  const [bcPeerCount, setBcPeerCount] = useState(0);
   const [localIP, setLocalIP] = useState('');
   const [roomID, setRoomID] = useState('');
 
@@ -97,6 +104,8 @@ export function useCRDTConnection(
     setAwarenessState(awareness);
     
     awareness.setLocalStateField('actor', actorName);
+    // One person = one browser: other tabs of the same browser share this id
+    awareness.setLocalStateField('deviceId', getDeviceId());
     awareness.setLocalStateField('color', actorColor);
     awareness.setLocalStateField('cursor', { x: 0, y: 0 });
     awareness.setLocalStateField('handId', crypto.randomUUID?.() || 'xxxx'.replace(/x/g, () => (Math.random()*16|0).toString(16)));
@@ -221,6 +230,8 @@ export function useCRDTConnection(
       const bc = peerData?.bcPeers?.length ?? (providerRef.current?.room?.bcConns?.size ?? 0);
       const count = webrtc + bc;
       setPeerCount(count);
+      setWebrtcPeerCount(webrtc);
+      setBcPeerCount(bc);
       if (count > 0 && !offlineModeRef.current) {
         setConnected(true);
         setConnectionState(prev => prev === 'connecting' ? 'syncing' : 'connected');
@@ -252,6 +263,8 @@ export function useCRDTConnection(
     migrationBackupAvailable,
     connected,
     peerCount,
+    webrtcPeerCount,
+    bcPeerCount,
     roomId: roomID,
     localIP,
     offlineMode: offlineModeRef.current,

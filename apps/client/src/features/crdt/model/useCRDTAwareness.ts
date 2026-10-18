@@ -42,9 +42,10 @@ export function useCRDTAwareness(doc: Y.Doc | null, awareness: Awareness | null)
     for (const [id, state] of states.entries()) {
       const s = state as any;
       const name = s?.actor ?? 'Anonymous';
-      // Keep the entry with the highest clientID (most recent connection) when names collide
-      if (!seen.has(name) || Number(id) > Number(seen.get(name)!.id)) {
-        seen.set(name, { id: String(id), name, color: s?.color ?? '#7c3aed' });
+      // One person per browser (deviceId); several tabs of the same browser count once
+      const key = s?.deviceId ?? `name:${name}`;
+      if (!seen.has(key) || Number(id) > Number(seen.get(key)!.id)) {
+        seen.set(key, { id: String(id), name, color: s?.color ?? '#7c3aed' });
       }
     }
     setParticipants(Array.from(seen.values()));
@@ -56,6 +57,9 @@ export function useCRDTAwareness(doc: Y.Doc | null, awareness: Awareness | null)
     // Build initial participant list from existing awareness states on mount
     rebuildParticipants();
 
+    // My own other tabs (same browser) don't show as extra cursors / lasers
+    const sameDevice = (state: any) => !!state?.deviceId && state.deviceId === (awareness.getLocalState() as any)?.deviceId;
+
     const handleAwarenessUpdate = (updated: any) => {
       setRemoteCursors(prev => {
         const next = new Map(prev);
@@ -64,6 +68,7 @@ export function useCRDTAwareness(doc: Y.Doc | null, awareness: Awareness | null)
         for (const clientID of updated.added || []) {
           if (clientID === doc.clientID) continue;
           const state = states.get(clientID) as any;
+          if (sameDevice(state)) { next.delete(String(clientID)); continue; }
           if (state?.cursor) {
             next.set(String(clientID), {
               x: state.cursor.x ?? 0,
@@ -76,6 +81,7 @@ export function useCRDTAwareness(doc: Y.Doc | null, awareness: Awareness | null)
         for (const clientID of updated.updated || []) {
           if (clientID === doc.clientID) continue;
           const state = states.get(clientID) as any;
+          if (sameDevice(state)) { next.delete(String(clientID)); continue; }
           if (state?.cursor) {
             next.set(String(clientID), {
               x: state.cursor.x ?? 0,
@@ -98,6 +104,7 @@ export function useCRDTAwareness(doc: Y.Doc | null, awareness: Awareness | null)
         for (const clientID of updated.added || []) {
           if (clientID === doc.clientID) continue;
           const state = states.get(clientID) as any;
+          if (sameDevice(state)) { next.delete(String(clientID)); continue; }
           if (state?.laser) {
             next.set(String(clientID), {
               points: state.laser.points || [],
@@ -108,6 +115,7 @@ export function useCRDTAwareness(doc: Y.Doc | null, awareness: Awareness | null)
         for (const clientID of updated.updated || []) {
           if (clientID === doc.clientID) continue;
           const state = states.get(clientID) as any;
+          if (sameDevice(state)) { next.delete(String(clientID)); continue; }
           if (state?.laser) {
             next.set(String(clientID), {
               points: state.laser.points || [],

@@ -1,8 +1,12 @@
 # CRDT Canvas
 
-A local-first, real-time collaborative drawing board powered by Conflict-free Replicated Data Types (CRDTs), peer-to-peer WebRTC synchronization, and semantic conflict detection.
+A peer-to-peer, offline-first collaborative whiteboard — part MS Paint, part MS Word — with a synced
+Watch Party for music, video and screen sharing. Built on Conflict-free Replicated Data Types (Yjs),
+direct WebRTC replication and semantic conflict detection.
 
-> **Academic Novelty**: Applied semantic conflict resolution for a 2D collaborative canvas — including a novel union-bounding-box merge rule for concurrent resizes and intent ambiguity detection that surfaces semantically dubious merges without requiring consensus or an authoritative server.
+> **Academic novelty**: semantic conflict handling for a shared 2D canvas — a union-bounding-box merge
+> rule for concurrent resizes, consensus-free intent-ambiguity detection, and an auditable conflict &
+> checkpoint log with before/after snapshots — all without an authoritative server.
 
 ---
 
@@ -19,36 +23,34 @@ A local-first, real-time collaborative drawing board powered by Conflict-free Re
 ## Architecture
 
 ```
-┌─────────────┐     WebRTC Data Channel (Direct P2P)    ┌─────────────┐
-│   Peer A    │ ◄─────────────────────────────────────► │   Peer B    │
-│  (Browser)  │                                         │  (Browser)  │
-└──────┬──────┘                                         └──────┬──────┘
-       │                                                       │
-       │ IndexedDB (offline-first local persistence)           │ IndexedDB
-       │                                                       │
-       ▼                                                       ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                          Yjs CRDT Document                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────┐  │
-│  │    Shapes    │  │  Awareness   │  │   Comments   │  │  Meta   │  │
-│  │ (Y.Array/XML)│  │ (ephemeral)  │  │   (Y.Array)  │  │ (Y.Map) │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  └─────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
-       ▲                                                       ▲
-       │ WebSocket (ephemeral signaling ONLY)                  │ WebSocket
-       └───────────────────────────────────────────────────────┘
-                                   │
-                          ┌────────┴────────┐
-                          │ Signaling Server│
-                          │     (:3001)     │
-                          │ (ICE/SDP relay) │
-                          └─────────────────┘
+┌─────────────┐      WebRTC data channels (direct P2P)      ┌─────────────┐
+│   Peer A    │ ◄──────────────────────────────────────────► │   Peer B    │
+│  (Browser)  │                                              │  (Browser)  │
+└──────┬──────┘                                              └──────┬──────┘
+       │ IndexedDB (offline-first)                                  │ IndexedDB
+       ▼                                                            ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Room document   "<roomId>::room"                                         │
+│   meta · members · join declines · boards list · votes · chat ·          │
+│   Watch Party channels (media broadcasts, screen-share signalling)       │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Board documents (one per board)  "<roomId>::b::<boardId>"                │
+│   shapes (Y.XmlElement) · checkpoints · conflict log · comments ·        │
+│   snapshots (de-duplicated, images stored once)                          │
+└──────────────────────────────────────────────────────────────────────────┘
+       ▲  WebSocket — signalling ONLY (peer discovery, SDP / ICE)      ▲
+       └───────────────────────┬────────────────────────────────────────┘
+                      ┌────────┴────────┐
+                      │ Signaling server│  :3001  (+ /api/ip, /api/time)
+                      └─────────────────┘
 ```
 
-**Key Architectural Principles**:
-- **Zero Authoritative Server**: The signaling server exists solely for WebRTC peer discovery, SDP exchange, and NAT traversal. All canvas mutations, awareness states, and comments flow directly between browsers over encrypted WebRTC data channels.
-- **Local-First Persistence**: Canvas state persists in IndexedDB (`y-indexeddb`), allowing full offline authoring. Edits made while offline reconcile automatically upon reconnection.
-- **Client-Side Read-Only Guard**: Shared viewer links enforce mutation suppression at the application and CRDT layer, keeping read-only consumers from polluting the shared document.
+- **No authoritative server** — the Node server only introduces peers. Drawings, chat, votes and media
+  control messages travel browser-to-browser.
+- **Offline-first** — every room and board is stored in IndexedDB. Draw with no network; changes merge
+  automatically when peers reconnect.
+- **Rooms hold boards** — a new room starts with one empty board; *New board* adds another without
+  touching the existing ones. Boards created before rooms existed are adopted automatically.
 
 ---
 
@@ -56,217 +58,213 @@ A local-first, real-time collaborative drawing board powered by Conflict-free Re
 
 | Layer | Technology | Role |
 |---|---|---|
-| **Frontend** | React 18, TypeScript, HTML5 Canvas API | High-performance 60 FPS 2D rendering, custom gesture physics, accessibility |
-| **Styling** | Emotion / Material UI (MUI), CSS | Sleek glassmorphism dark theme, floating toolbars, responsive overlay layouts |
-| **CRDT Engine** | Yjs, y-protocols Awareness | Conflict-free state synchronization, distributed undo/redo, presence cursors |
-| **P2P Transport** | WebRTC Data Channels (y-webrtc / simple-peer) | Direct browser-to-browser encrypted replication |
-| **Signaling** | Node.js, `ws` (WebSocket) | Ephemeral session discovery and ICE candidate exchange |
-| **Persistence** | IndexedDB (`y-indexeddb`) | Zero-latency local hydration and offline buffer |
-| **Testing** | Vitest, Playwright | Unit tests (engine & client) and end-to-end integration tests |
+| Frontend | React 18, TypeScript, HTML5 Canvas | Board rendering & interaction, panels |
+| Styling | MUI + CSS variables | Per-device day / night theme (pastel café-and-garden palette by day, low-glare night palette) |
+| CRDT | Yjs, y-protocols Awareness | Shared state, presence, cursors, lasers |
+| P2P transport | y-webrtc / simple-peer | Direct replication + screen-share streams |
+| Signalling | Node.js, `ws` | Discovery, LAN IP and clock endpoints |
+| Persistence | IndexedDB (`y-indexeddb`) | Local copy of every room & board |
+| Testing | Vitest, Playwright | Engine + client unit tests, e2e |
 
 ---
 
-## Core Capabilities
+## What you can do
 
-### 1. Spatial Authoring & Canvas Manipulation
-- **Shape Primitives**: Rectangles, ellipses, straight lines, sticky notes, multiline text, freehand strokes, and raster images.
-- **Connectors & Magnetic Snap**: Line endpoints attach magnetically to object boundaries, compute angle-aware perimeter anchors, and follow target moves/resizes.
-- **Styling Controls**: Shared active palette, hex colour picker, fill opacity, stroke width, and corner radius.
-- **Alignment & Snapping**: Real-time edge/center alignment guides, equal distance gap detection with live distance labels, and one-batch multi-object alignment/distribution.
-- **Deterministic Note Tidy**: Clean column-based auto-layout for brainstorming notes captured in a single undoable transaction.
+### Look and feel
+Day / night toggle per device: a pastel café-and-garden palette (sage greens, latte browns, cream canvas) by
+day and a low-glare moss-and-bark palette at night — applied to every screen, panel, dialog and the Watch Party.
+Dark ink is shown light on the night canvas so drawings stay visible to peers using the other theme.
 
-### 2. Framing & Presentation Mode
-- **Frames**: Named frame containers that group and move contained children.
-- **Nested Frames**: Frames support hierarchical containment and transform propagation.
-- **Text Scale Invariant (L32)**: Frame resizes scale geometric bounds and positions, but preserve text glyph readability and typography without micro-scaling.
-- **Presentation Slideshow**: Cycle through named frames in presentation mode with smooth viewport transitions and keyboard navigation (<kbd>Space</kbd>, <kbd>Arrow</kbd>).
+### Board tools (left rail)
+| Tool | Key | What it does |
+|---|---|---|
+| Select (cursor) | V | Pick one object; drag to move, round handles to resize, Shift-click to add |
+| Hand (box select) | H | Drag a translucent blue box to select many objects; drag the box to move the group, its corners to resize |
+| Pen | P | Freehand strokes (one clean line style) |
+| Line / arrow | L | Straight line with no arrow, end arrow or both; ends attach to shapes |
+| Rectangle / Ellipse | R / O | Shift for square / circle; corners pointed or rounded |
+| Text box | T | Click or drag a box and type — Arial or Times New Roman |
+| Image | I | Place, drop or paste PNG / JPEG / WebP / GIF |
+| Fill | F | Fill a closed shape (rect, ellipse, text box, closed pen shape) |
+| Eraser | E | Partial erase of pen strokes, like a pencil eraser — sizes S / M / L |
+| Delete | D | Remove a whole object |
+| Laser | K | Glowing tip with a fading tail in your pointer colour (not saved) |
 
-### 3. Facilitation & Collaboration Suite
-- **Guided Retrospectives**: 4 structured stages (*Gather* 💬, *Group* 🗂️, *Vote* 🗳️, *Commit* ✅) with facilitator guidance boxes and participant prompts.
-- **Dot Voting**: Configurable votes-per-person limits, live dot badges on canvas objects, and ranked medal leaderboard.
-- **Shared Timer**: Synchronized countdown timer with visual status chips and audio chimes.
-- **Anchored Comments**: Threaded discussion pins anchored to canvas coordinates with status toggles (*Open* / *Resolved*) and emoji reactions.
-- **Presence & Lasers**: Ephemeral laser pointers with decaying trails, live cursor tags, and co-collaborator avatars.
+**Selection bar** (appears above any selection, like Word's mini toolbar): colour, fill, thickness,
+line style (solid, dashed, dots with small or long gaps), corners, opacity, font & size, − / + resize,
+comment, lock, delete. With the hand tool, *Text box* turns the blue box into a text box of the same size.
 
-### 4. Recovery, Migration & Stencils
-- **Schema Migration**: Versioned schema upgrading (v0 → v1) with preflight validation, idempotency, dry-run evaluation, and rollback backups.
-- **Named Checkpoints**: Snapshot and restore board versions as editable copies.
-- **Reusable Stencils**: Save native selections to a local stencil library (up to 50 items, 10 versions each, preview render) with automatic group and connector remapping on insertion.
-- **Curated Starter Templates**: 1-click instantiation for Brainstorming, Sprint Retrospective, Kanban Delivery, and Systems Architecture.
-- **Task Tracker Handoff**: Format sticky notes and frame-grouped tasks to GitHub Issues Markdown, Jira CSV, or Webhook JSON with user data boundary consent.
+Zoom with the wheel / pinch or the **+ / −** buttons. Undo / redo with Ctrl+Z / Ctrl+Y.
 
-### 5. Accessibility & Search
-- **Quick Find (<kbd>Ctrl</kbd>+<kbd>F</kbd>)**: Real-time full-text search across notes, text, and frame titles with pulsing beacon zoom navigation.
-- **Keyboard-Only Workflow**: Full canvas navigation using <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> to cycle shapes, <kbd>Arrow</kbd> keys to nudge (1 px / 10 px), and <kbd>Enter</kbd> / <kbd>F2</kbd> for inline text editing.
-- **Assistive Technology**: Screen-reader live regions (`aria-live="polite"`) announcing selection changes, nudges, search matches, and facilitation state.
+### Rooms, people and boards
+- **Create / join** — creating makes you host. Anyone joining waits until an approved member (host *or*
+  any member, so it works when the host is offline) presses **Allow** or **Decline**. (Basic admission
+  only — not a security boundary.)
+- **Room details** (top right): room ID and name, description, everyone with their pointer-colour dot and
+  online state, boards list (open / rename / delete), open votes, leave room. Host can kick (their work
+  stays) and start a *delete room* vote.
+- **You** (avatar): name, pointer & laser colour, rooms you've joined (click to switch), day / night.
+- **Share**: a *view-only* link (just the live drawing, no tools) and an *edit* link (full tools, needs approval).
+- **Comments** attach notes to selected objects; **Chat** is room-wide.
+- **Templates** (2 demo layouts), **Export** PNG / PDF (board or selection).
+- **Multiple boards** per room: board switcher next to the room name; *New board* adds an empty board
+  without touching the others. Rooms and boards both have a name and description.
+- **Waiting screen** tells a joiner what's happening: how many members are online and can approve,
+  "no member online yet", "can't reach the signalling server", or "this browser is already in the room".
+- **About** panel lists every icon with its name and meaning.
+
+### People, presence and online status
+- **One browser = one person.** Each browser keeps a permanent device ID; your name is only a label, so
+  renaming (e.g. Ruby → Ethan) on the same browser updates the same member instead of adding a new one.
+- **Tabs** of the same browser count as one person — shown once in counts and lists, and your own other tabs
+  don't appear as extra cursors or lasers. (Each tab is still its own CRDT replica underneath, which merging needs.)
+- **Different browsers, incognito windows and other devices** are different people.
+- **Test mode:** a tab opened with `?guest=1` gets its own identity, so one person can test as two in one browser.
+- Top-bar status: **"N on this board"**, **"Online · only you here"** (server reachable, nobody else yet) or
+  **"Offline · saved locally"** (server unreachable — edits are kept and merge on reconnect).
+
+### Locks and votes (room governance)
+| Action | Needs |
+|---|---|
+| Delete a board (its creator asks) | ≥ ¼ of active members |
+| Delete the room (host asks) | ≥ ¼ of active members |
+| Unlock objects | > ½ of active members |
+| Delete locked objects | > ½ of active members |
+| Revert a board to a checkpoint | > ½ of active members |
+
+Active members = approved, not removed, seen in the last 7 days. Votes expire after 24 h. Every peer
+evaluates the same shared vote record, so results are identical everywhere. This governance layer sits
+**on top of** the CRDT — the conflict detection below needs no voting or consensus.
+
+### Watch Party
+Play a YouTube link or a local audio / video file (uploaded to the local server and streamed to everyone on
+the Wi-Fi / hotspot, no internet needed), or share your screen / tab with audio. One peer hosts, the others
+follow in sync.
+
+- Shared server clock + host heartbeat + smooth speed nudging keep listeners within about **±0.05 s**.
+- Host: play / pause / seek for everyone, ±10 s, previous / next, loop, autoplay, speed, subtitles (`.srt` / `.vtt`).
+- Listeners: own volume, pause, ±10 s just for me, *Sync to Host*, personal speed, captions, live drift readout.
+- Views: floating dock, draggable minimised pill (always on top of panels), theatre, full screen.
+- Belongs to the **room**: keeps playing while you switch boards in the same room; leaving the room or switching
+  to another room stops what you were hosting, so nothing carries over between rooms.
 
 ---
 
 ## Novel Academic Contributions
 
 ### 1. Union-Bounding-Box Merge Rule for Concurrent Resizes
-Standard Last-Write-Wins (LWW) CRDT semantics arbitrarily discard one participant's work when two peers resize the same shape concurrently.
+Last-Write-Wins silently discards one person's resize. When two concurrent resizes of the same shape are
+detected, the engine merges them as the union of both boxes:
 
-**Our Solution**: When concurrent resize operations are detected on the same shape, the engine computes the **union bounding box** of both edits:
-$$\text{Box}_{\text{merged}} = \text{Box}_A \cup \text{Box}_B = [\min(x_{A1}, x_{B1}), \min(y_{A1}, y_{B1}), \max(x_{A2}, x_{B2}), \max(y_{A2}, y_{B2})]$$
+$$\text{Box}_{\text{merged}} = [\min(x_{A1}, x_{B1}), \min(y_{A1}, y_{B1}), \max(x_{A2}, x_{B2}), \max(y_{A2}, y_{B2})]$$
 
-This merge is **commutative**, **associative**, and **idempotent**, ensuring mathematical CRDT convergence while respecting both collaborators' spatial intent without data loss.
+The rule is commutative, associative and idempotent, so all replicas converge without losing either
+participant's intent. Each auto-merge is now also written to the conflict log (as resolved) with
+before / after snapshots and a merge checkpoint.
 
 ### 2. Intent Ambiguity Detection (Consensus-Free)
-Standard CRDT systems converge silently, even when two concurrent operations represent conflicting user intent (e.g. Peer A moves a shape to the top-left while Peer B moves it to the bottom-right).
+A pure function evaluated identically on every peer:
 
-**Our Solution**: A deterministic classification function computed independently by all peers:
-$$\text{Displacement} = \|\text{Center}_A - \text{Center}_B\|$$
-$$\text{Ambiguity Ratio} = \frac{\text{Displacement}}{\max(\text{Size}_A, \text{Size}_B)}$$
+$$\text{Ratio} = \frac{\|\text{Center}_A - \text{Center}_B\|}{\max(\text{Size}_A, \text{Size}_B)}$$
 
-- $\text{Ratio} < 0.1 \implies \text{None}$
-- $0.1 \le \text{Ratio} < 0.5 \implies \text{Low}$
-- $0.5 \le \text{Ratio} < 1.5 \implies \text{Medium}$
-- $\text{Ratio} \ge 1.5 \implies \text{High}$
+- Ratio < 0.1 → None · 0.1 – 0.5 → Low · 0.5 – 1.5 → Medium · ≥ 1.5 → High
 
-Because the function is pure and evaluated over identical CRDT states, all peers raise identical ambiguity flags **without needing consensus protocols or network rounds**.
+Because it runs over the same CRDT state, all peers raise the same flag with no extra network rounds.
+Resolution (merge / keep mine / keep remote) is unchanged.
 
-### 3. Merge History Playback
-Complete timeline tracking that records creates, updates, deletes, conflicts, and auto-merges, enabling visual scrub-through playback of board evolution.
+### 3. Auditable Conflict & Checkpoint Log
+Replaces the earlier history playback with something you can act on:
+
+- **Session checkpoints** — when a person starts editing, the board is snapshotted (START); when they go
+  idle for a minute or leave, again (END). Every checkpoint shows who and when, can be viewed, and the
+  board can be reverted to it by a majority vote.
+- **Conflict log** (triangle icon, red counter = open conflicts) — every conflict with timestamp, who
+  caused it and BEFORE / AFTER snapshots. The affected area gets a faint yellow outline on the board until
+  someone marks it resolved; each person can *dismiss* the outline for themselves only.
+- **"Drawn over" rule** — a new or moved object covering ≥ 30 % of someone else's object that was
+  created or edited in the last 10 minutes is logged as an overlap conflict. Like rule 2 it is computed
+  from shared state only, so every peer reaches the same verdict.
+- Snapshots are stored inside the board's CRDT document and de-duplicated (images kept once by hash), so
+  the log syncs and works offline like everything else.
 
 ---
 
 ## Monorepo Layout
 
 ```text
-crdt-canvas/
+canvas-crdt/
 ├── apps/
-│   ├── client/                      # React 18 + Vite client application
-│   │   └── src/
-│   │       ├── features/
-│   │       │   ├── canvas/          # CanvasRenderer, Toolbar, CanvasController, exports
-│   │       │   │   └── __tests__/   # boardDuplication, imageLimits, readOnlyGuard tests
-│   │       │   ├── crdt/            # StatusPanel, Conflict widgets, TimeTravel, MergeLens
-│   │       │   ├── facilitation/    # FacilitationPanel (timer, dot voting, guided retros)
-│   │       │   ├── comments/        # useBoardComments, CommentsPanel
-│   │       │   ├── checkpoints/     # useBoardCheckpoints, CheckpointsPanel
-│   │       │   ├── stencils/        # stencilStore, useStencils, StencilsPanel
-│   │       │   ├── templates/       # curatedTemplates, TemplatesModal
-│   │       │   ├── integrations/    # taskHandoff, TaskTrackerHandoffModal
-│   │       │   │   └── __tests__/   # taskHandoff tests
-│   │       │   ├── sharing/         # ShareBoardModal (editor, viewer, presenter links)
-│   │       │   ├── chat/            # Collaborative P2P text chat
-│   │       │   └── demo/            # Showcase bar, DualPeerContainer
-│   │       ├── hooks/               # useCanvasCRDT (orchestrates Yjs, WebRTC, IndexedDB)
-│   │       └── views/               # SingleCanvasView, JoinScreen
-│   └── server/                      # Lightweight WebRTC signaling relay (discovery only)
-│       └── src/index.ts
-├── packages/
-│   └── engine/                      # Standalone CRDT engine library
-│       └── src/
-│           ├── core.ts              # Shape types, vector clocks, ambiguity, union-bbox
-│           ├── yjs-canvas.ts        # Yjs document binding, schema migration, transactions
-│           └── __tests__/           # 5 test suites (core, history, peer round-trip,
-│                                    # frame transforms, performance budgets)
-├── docs/                            # Specifications, security model, and roadmaps
-│   ├── PRODUCT_ROADMAP.md           # 15-sprint feature specifications
-│   ├── ROADMAP_PROGRESS.md          # Implementation verification tracker
-│   ├── TECHNICAL_DESIGN.md          # Architectural blueprints and CRDT math
-│   ├── INTEGRATION_DISCOVERY.md     # Extension points and export boundary contracts
-│   └── SHARING_AND_ACCESS_CONTROLS.md # Threat model and permission matrix
-├── tests/
-│   └── e2e/                         # Playwright end-to-end integration tests
-├── package.json                     # Monorepo scripts and root dependencies
-├── pnpm-workspace.yaml
-└── tsconfig.base.json
+│   ├── client/src/
+│   │   ├── app/                 # identity (device id, name, pointer colour, joined rooms), signalling URL
+│   │   ├── theme/               # day / night palettes, CSS variables, MUI theme
+│   │   ├── features/
+│   │   │   ├── board/           # BoardCanvas, toolbar, selection bar, geometry, renderer, logs
+│   │   │   ├── room/            # useRoom (membership, approval, boards, votes), types
+│   │   │   ├── panels/          # room details, profile, share, conflicts, checkpoints, comments, about
+│   │   │   ├── crdt/            # connection, awareness, ops (undo/redo), conflict widget
+│   │   │   ├── media/           # Watch Party (sync, screen share, dock)
+│   │   │   ├── chat/            # room chat
+│   │   │   ├── templates/       # 2 demo templates
+│   │   │   ├── canvas/          # export PNG/PDF, image prep, migration recovery (+ tests)
+│   │   │   └── demo/            # demo-scenarios explainer (minimisable)
+│   │   ├── hooks/               # useCanvasCRDT (Yjs + WebRTC + IndexedDB per board)
+│   │   └── views/               # JoinScreen, RoomScreen (waiting screens + Watch Party), BoardView
+│   └── server/src/index.ts      # signalling relay, /api/ip, /api/time, media upload & streaming
+├── packages/engine/src/         # CRDT engine: shapes, vector clocks, union-bbox, ambiguity, Yjs binding
+├── docs/
+└── tests/e2e/
 ```
 
 ---
 
 ## Getting Started
 
-### Prerequisites
-
-- **Node.js**: `>= 20.0.0`
-- **pnpm**: `>= 8.0.0`
-
-### Installation
+Prerequisites: Node.js ≥ 20.
 
 ```bash
-# Clone the repository
 git clone https://github.com/kevincell/canvas-crdt.git
-cd crdt-canvas
-
-# Install dependencies across all workspaces
-pnpm install
-
-# Build the engine library
-pnpm --filter @crdt-canvas/engine build
+cd canvas-crdt
+npm install
+npm run dev        # signalling :3001 + client :5173
 ```
 
-### Running Locally
+Full step-by-step guide (addresses, test mode, who counts as a peer, online / offline): **[RUN_GUIDE.md](./RUN_GUIDE.md)**.
+What changed in this version: **[UPDATES.md](./UPDATES.md)** (details) and **[CHANGES.md](./CHANGES.md)** (short list).
+
+| Who | Address |
+|---|---|
+| This computer | `http://localhost:5173` |
+| Other devices on the same Wi-Fi / hotspot | `http://<this computer's LAN IP>:5173` (shown in Share / Room details) |
+| A second person in the same browser (testing) | `http://localhost:5173/?guest=1` |
+| View only | Share → *View only* link (ends in `&view=1`) |
+
+Windows Firewall must allow ports 5173 and 3001 for other devices.
+
+Try it with two people:
+1. A: open http://localhost:5173, enter a name, **Create room**.
+2. Room details → copy the Room ID (or Share → *Edit* link, which uses the LAN address).
+3. B (another device, another browser, or a `?guest=1` tab): enter a name, paste the ID, **Ask to join** → A presses **Allow**.
+4. Draw on both at once, resize the same rectangle from both sides, go offline and back.
+
+---
+
+## Testing
 
 ```bash
-# Start both the signaling server (:3001) and Vite dev server (:5173) concurrently
-pnpm run dev
+npm test                     # engine + client unit tests
+npm run typecheck            # engine, client, server
+npx playwright test          # end-to-end
 ```
 
-- **Client**: [http://localhost:5173](http://localhost:5173)
-- **Signaling Server**: `ws://localhost:3001`
-
-To test multi-user collaboration:
-1. Open [http://localhost:5173](http://localhost:5173) in Tab A, enter your name, and join a room.
-2. Open the same URL with the same Room ID in Tab B (or an incognito window).
-3. Draw, move objects, or test concurrent resize to observe real-time CRDT synchronization!
-4. Or click **"Dual Tab"** in the top navigation bar to open a split-screen side-by-side simulation within a single tab.
+Client suites: `imageLimits.test.ts`, `readOnlyGuard.test.ts`, `mediaSync.test.ts`.
 
 ---
 
-## Verification & Testing
-
-The project includes unit, integration, round-trip, and performance suites:
-
-```bash
-# Run all unit & integration tests across engine and client (62 tests)
-pnpm test
-
-# Run tests with watch mode
-pnpm --filter @crdt-canvas/engine test:watch
-
-# Run TypeScript typechecks across engine, client, and server
-pnpm typecheck
-
-# Run Playwright end-to-end tests
-pnpm exec playwright test
-```
-
-### Test Coverage Highlights
-- **Engine Tests** (45 tests):
-  - `core.test.ts`: Vector clocks, bounding box calculations, LWW resolution, deduplication.
-  - `history.test.ts`: Merge history timelines, undo/redo replay, conflict indexing.
-  - `peer_roundtrip.test.ts`: Yjs encoding/decoding round-trips, reconnect recovery, v0 legacy migration idempotency, concurrent move detection.
-  - `frameTransforms.test.ts`: Nested frame transforms, recursive descendant tracking, text-scale invariant verification.
-  - `performanceBudget.test.ts`: 1,000 shapes bounding box (<16 ms), spatial viewport culling (<10 ms), stroke simplification (<5 ms).
-- **Client Tests** (17 tests):
-  - `taskHandoff.test.ts`: Export to GitHub Markdown, Jira CSV, Webhook payload, boundary consent.
-  - `boardDuplication.test.ts`: Safe deep cloning, ID remapping, curated template instantiation.
-  - `imageLimits.test.ts`: 15 MB file limit, 2 MB base64 limit, 25 MB cumulative board quota checks.
-  - `readOnlyGuard.test.ts`: Mutation suppression and document tamper prevention in read-only mode.
-
----
-
-## Security & Access Control
-
-Access control in `@crdt-canvas` is documented in [docs/SHARING_AND_ACCESS_CONTROLS.md](./docs/SHARING_AND_ACCESS_CONTROLS.md) and follows a defense-in-depth model:
-- **Editor (`role=editor`)**: Full read/write access.
-- **Viewer (`role=viewer`)**: Read-only access; drawing, moving, resizing, text editing, and undo/redo APIs are replaced with inert no-ops via `useCanvasCRDT`.
-- **Presenter (`role=viewer&present=true`)**: View-only mode with presentation slideshow interface.
-- **DTLS-SRTP**: WebRTC media and data channels are end-to-end encrypted between peer endpoints.
-
----
-
-## Documentation
-
-- [Roadmap & Specifications](./docs/PRODUCT_ROADMAP.md)
-- [Delivery Tracker](./docs/ROADMAP_PROGRESS.md)
-- [Technical Design & CRDT Math](./docs/TECHNICAL_DESIGN.md)
-- [Sharing, Threat Model & Permissions](./docs/SHARING_AND_ACCESS_CONTROLS.md)
-- [Integration Discovery & Extension Points](./docs/INTEGRATION_DISCOVERY.md)
+## Removed in this version
+Dual-peer split mode, sticky notes (now comments), history playback, brush textures, stencils,
+facilitation (timer / dot voting / retros), task-tracker export, quick find, presentation mode,
+alignment guides & tidy, duplicate board, Calibri, 1:1 / fit buttons. Demo scenarios are kept as a
+minimisable explainer with the scripted demos switched off.
 
 ---
 
