@@ -1,7 +1,5 @@
 # Sharing, Access Controls & Threat Model
 
-> **Status (v1.0):** this document describes the v0.1 design. Since 1.0, shapes use per-property registers (schema v2), conflicts are detected causally, undo uses `Y.UndoManager`, boards are end-to-end encrypted via a key in the URL fragment, and the UI was rebuilt. See [RESEARCH.md](./RESEARCH.md) and the [README](../README.md#architecture) for the current design.
-
 This document captures the threat model, trust assumptions, permission architecture, and defense-in-depth measures for board sharing in `@crdt-canvas`.
 
 ---

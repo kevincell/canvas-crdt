@@ -50,3 +50,6 @@ Desktop.ini
 
 # Turbo / Build cache
 .turbo/
+
+# Watch Party uploads (local media served to peers)
+apps/server/uploads/

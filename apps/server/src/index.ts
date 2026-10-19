@@ -1,340 +1,581 @@
 /**
- * CRDT Canvas server — one small process that:
- *   • serves the built web app (offline-capable PWA) with strict security headers,
- *   • relays WebRTC signaling for y-webrtc (pub/sub over WebSocket at /ws),
- *   • reports health at /health.
+ * CRDT Canvas Signaling Server
  *
- * It never sees board content: peers exchange encrypted CRDT updates directly,
- * and with an end-to-end key even the signaling messages are opaque.
+ * HTTP API (port 3001):
+ *   GET  /api/ip        — returns local LAN IP for WiFi peer discovery
+ *   GET  /api/room/:id  — room presence info
+ *   GET  /health        — health check
+ *   GET  /api/time      — server clock (watch-party clock sync)
+ *   POST /api/media/upload — upload a local audio/video/subtitle file (raw body, X-Filename header)
+ *   GET  /api/media/:id    — stream an uploaded file (HTTP Range support for seeking)
+ *
+ * WebSocket (port 3001, path /ws and /):
+ *   Fully compliant with y-webrtc signaling protocol (subscribe, unsubscribe, publish, ping/pong).
+ *   Used for WebRTC peer discovery only. No canvas data is stored on this server.
  */
-import { createServer, type IncomingMessage, type ServerResponse } from 'http';
+
+import { createServer, type ServerResponse, type IncomingMessage } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { networkInterfaces } from 'os';
-import { createHash } from 'crypto';
-import { existsSync, readFileSync, statSync } from 'fs';
-import { extname, join, normalize, resolve, sep, dirname } from 'path';
-import { gzipSync } from 'zlib';
+import { randomUUID } from 'crypto';
+import { stat as fsStat, unlink, readdir } from 'fs/promises';
+import { createReadStream, createWriteStream, existsSync, mkdirSync } from 'fs';
+import { join, extname, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-// ── Configuration ────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
 
-const env = process.env;
-const here = dirname(fileURLToPath(import.meta.url));
-export const config = {
-  port: intEnv('PORT', 3001, 1, 65535),
-  host: env.HOST || '0.0.0.0',
-  production: env.NODE_ENV === 'production',
-  staticDir: resolve(env.STATIC_DIR || join(here, '../../client/dist')),
-  lanDiscovery: env.LAN_DISCOVERY ? env.LAN_DISCOVERY === 'true' : env.NODE_ENV !== 'production',
-  maxConnections: intEnv('MAX_CONNECTIONS', 5000, 1, 1_000_000),
-  maxTopicsPerPeer: intEnv('MAX_TOPICS_PER_PEER', 64, 1, 10_000),
-  maxPeersPerTopic: intEnv('MAX_PEERS_PER_TOPIC', 256, 2, 100_000),
-  maxMessageBytes: intEnv('MAX_MESSAGE_BYTES', 256 * 1024, 1024, 16 * 1024 * 1024),
-  messagesPerSecond: intEnv('MESSAGES_PER_SECOND', 60, 1, 100_000),
-  burst: intEnv('MESSAGE_BURST', 240, 1, 1_000_000),
-  pingIntervalMs: intEnv('PING_INTERVAL_MS', 30_000, 1000, 600_000),
-};
-
-function intEnv(name: string, fallback: number, min: number, max: number): number {
-  const raw = env[name];
-  if (raw === undefined || raw === '') return fallback;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < min || value > max) {
-    console.error(`[server] ${name}=${raw} is invalid (expected ${min}–${max}); using ${fallback}.`);
-    return fallback;
-  }
-  return value;
-}
-
-// ── Signaling state ──────────────────────────────────────────────────────────
-
-interface Peer {
+type Peer = {
+  id: string;
   ws: WebSocket;
-  topics: Set<string>;
-  tokens: number;
-  lastRefill: number;
-  alive: boolean;
+  rooms: Set<string>;
+  name?: string;
+  connectedAt: number;
+};
+
+type Room = {
+  id: string;
+  peers: Map<string, Peer>;
+  createdAt: number;
+};
+
+// ── State ────────────────────────────────────────────────────────────────────
+
+const PORT = parseInt(process.env.PORT ?? '3001', 10);
+if (isNaN(PORT) || PORT < 1 || PORT > 65535) {
+  console.error(`[signaler] Invalid PORT env var: ${process.env.PORT ?? 'unset'}. Defaulting to 3001.`);
+  process.exit(1);
+}
+const peers = new Map<WebSocket, Peer>();
+const rooms = new Map<string, Room>();
+
+// ── Media Uploads ────────────────────────────────────────────────────────────
+
+// This package is ESM ("type": "module"), so __dirname does not exist — derive it.
+// Resolves to apps/server/uploads from both src/ (tsx) and dist/ (node).
+const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
+const UPLOADS_DIR = join(SERVER_DIR, '..', 'uploads');
+if (!existsSync(UPLOADS_DIR)) {
+  mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
-const topics = new Map<string, Set<Peer>>();
-const peers = new Set<Peer>();
-const stats = { startedAt: Date.now(), messages: 0, dropped: 0 };
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 500 MB
+const UPLOAD_IDLE_TTL_MS = 6 * 60 * 60 * 1000; // delete files nobody has streamed for 6 hours
 
-/** Room names are secrets; logs only ever show a short hash. */
-const tag = (topic: string) => createHash('sha256').update(topic).digest('hex').slice(0, 8);
+// Upload metadata (original filename + last time a peer streamed it)
+const uploadMeta = new Map<string, { createdAt: number; lastAccess: number; filename: string }>();
 
-function send(ws: WebSocket, message: unknown) {
-  if (ws.readyState !== WebSocket.OPEN) return;
-  try { ws.send(JSON.stringify(message)); } catch { /* socket closing */ }
-}
+const MIME_TYPES: Record<string, string> = {
+  '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.aac': 'audio/aac',
+  '.m4a': 'audio/mp4',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+  '.mov': 'video/quicktime',
+  '.opus': 'audio/opus',
+  '.wma': 'audio/x-ms-wma',
+  '.wmv': 'video/x-ms-wmv',
+  '.m4v': 'video/mp4',
+  '.vtt': 'text/vtt; charset=utf-8',
+};
 
-function subscribe(peer: Peer, topic: string) {
-  if (peer.topics.has(topic)) return;
-  if (peer.topics.size >= config.maxTopicsPerPeer) return;
-  let members = topics.get(topic);
-  if (!members) { members = new Set(); topics.set(topic, members); }
-  if (members.size >= config.maxPeersPerTopic) return;
-  members.add(peer);
-  peer.topics.add(topic);
-  if (!config.production) console.log(`[signal] join ${tag(topic)} (${members.size})`);
-}
+const ALLOWED_EXTS = new Set(Object.keys(MIME_TYPES));
 
-function unsubscribe(peer: Peer, topic: string) {
-  if (!peer.topics.delete(topic)) return;
-  const members = topics.get(topic);
-  if (!members) return;
-  members.delete(peer);
-  if (members.size === 0) topics.delete(topic);
-}
-
-function allow(peer: Peer): boolean {
+// Auto-cleanup: scans the folder (so files left over from a previous run are cleaned too)
+// and only removes files that nobody has streamed recently — a long movie is never deleted mid-party.
+async function cleanupUploads() {
   const now = Date.now();
-  peer.tokens = Math.min(config.burst, peer.tokens + ((now - peer.lastRefill) / 1000) * config.messagesPerSecond);
-  peer.lastRefill = now;
-  if (peer.tokens < 1) return false;
-  peer.tokens -= 1;
-  return true;
+  let entries: string[] = [];
+  try {
+    entries = await readdir(UPLOADS_DIR);
+  } catch {
+    return;
+  }
+  for (const id of entries) {
+    const filepath = join(UPLOADS_DIR, id);
+    try {
+      const stats = await fsStat(filepath);
+      if (!stats.isFile()) continue;
+      const lastUsed = Math.max(stats.mtimeMs, uploadMeta.get(id)?.lastAccess ?? 0);
+      if (now - lastUsed > UPLOAD_IDLE_TTL_MS) {
+        await unlink(filepath);
+        console.log(`[media] Auto-cleaned idle upload: ${uploadMeta.get(id)?.filename ?? id}`);
+        uploadMeta.delete(id);
+      }
+    } catch { /* file busy or already gone — try again next round */ }
+  }
 }
+cleanupUploads();
+setInterval(cleanupUploads, 15 * 60 * 1000); // Check every 15 minutes
 
-const validTopic = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 512;
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-export function handleMessage(peer: Peer, message: unknown) {
-  if (!message || typeof message !== 'object') return;
-  const msg = message as { type?: unknown; topics?: unknown; topic?: unknown };
-  switch (msg.type) {
-    case 'subscribe':
-      if (Array.isArray(msg.topics)) msg.topics.filter(validTopic).forEach(topic => subscribe(peer, topic));
-      break;
-    case 'unsubscribe':
-      if (Array.isArray(msg.topics)) msg.topics.filter(validTopic).forEach(topic => unsubscribe(peer, topic));
-      break;
-    case 'publish': {
-      if (!validTopic(msg.topic) || !peer.topics.has(msg.topic)) return;
-      const receivers = topics.get(msg.topic);
-      if (!receivers) return;
-      const out = { ...(message as object), clients: receivers.size };
-      for (const receiver of receivers) send(receiver.ws, out);
-      break;
+function getLocalIP(): string {
+  const nets = networkInterfaces();
+  for (const _name of Object.keys(nets)) {
+    const iface = nets[_name] ?? [];
+    for (const entry of iface) {
+      if (entry.family === 'IPv4' && !entry.internal) {
+        return entry.address;
+      }
     }
-    case 'ping':
-      send(peer.ws, { type: 'pong' });
-      break;
   }
+  return '127.0.0.1';
 }
 
-// ── HTTP: static app, health, LAN discovery ─────────────────────────────────
-
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.webp': 'image/webp',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.map': 'application/json; charset=utf-8',
-  '.txt': 'text/plain; charset=utf-8',
-};
-const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.webmanifest', '.svg', '.map', '.txt']);
-
-const SECURITY_HEADERS: Record<string, string> = {
-  'Content-Security-Policy': [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "connect-src 'self' ws: wss:",
-    "worker-src 'self'",
-    "manifest-src 'self'",
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-  ].join('; '),
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
-  'X-Frame-Options': 'DENY',
-};
-
-const fileCache = new Map<string, { body: Buffer; gzip: Buffer | null; etag: string; mtime: number }>();
-
-function loadFile(path: string) {
-  const stat = statSync(path);
-  const cached = fileCache.get(path);
-  if (cached && cached.mtime === stat.mtimeMs) return cached;
-  const body = readFileSync(path);
-  const entry = {
-    body,
-    gzip: COMPRESSIBLE.has(extname(path)) && body.length > 1024 ? gzipSync(body, { level: 9 }) : null,
-    etag: `"${createHash('sha1').update(body).digest('base64url').slice(0, 20)}"`,
-    mtime: stat.mtimeMs,
-  };
-  fileCache.set(path, entry);
-  return entry;
-}
-
-function serveStatic(req: IncomingMessage, res: ServerResponse, pathname: string): boolean {
-  if (!existsSync(config.staticDir)) return false;
-  let decoded: string;
-  try { decoded = decodeURIComponent(pathname); } catch { return false; }
-  const target = normalize(join(config.staticDir, decoded));
-  // Path traversal guard.
-  if (target !== config.staticDir && !target.startsWith(config.staticDir + sep)) return false;
-  let file = target;
-  let isFallback = false;
-  if (!existsSync(file) || statSync(file).isDirectory()) {
-    if (extname(decoded)) return false; // a missing asset is a real 404
-    file = join(config.staticDir, 'index.html'); // app routes live in the hash; serve the shell
-    isFallback = true;
-    if (!existsSync(file)) return false;
-  }
-  const entry = loadFile(file);
-  const ext = extname(file);
-  const immutable = !isFallback && /[\\/]assets[\\/]/.test(file);
-  const headers: Record<string, string> = {
-    ...SECURITY_HEADERS,
-    'Content-Type': MIME[ext] ?? 'application/octet-stream',
-    'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
-    ETag: entry.etag,
-    Vary: 'Accept-Encoding',
-  };
-  if (req.headers['if-none-match'] === entry.etag) {
-    res.writeHead(304, headers);
-    res.end();
-    return true;
-  }
-  const gzip = entry.gzip && /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
-  if (gzip) headers['Content-Encoding'] = 'gzip';
-  const body = gzip ? entry.gzip! : entry.body;
-  headers['Content-Length'] = String(body.length);
-  res.writeHead(200, headers);
-  res.end(req.method === 'HEAD' ? undefined : body);
-  return true;
-}
-
-function json(res: ServerResponse, status: number, data: unknown) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+function sendJSON(res: ServerResponse, status: number, data: unknown) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Filename, Range',
+  });
   res.end(JSON.stringify(data));
 }
 
-function lanAddress(): string | null {
-  for (const list of Object.values(networkInterfaces())) {
-    for (const entry of list ?? []) {
-      if (entry.family === 'IPv4' && !entry.internal && !entry.address.startsWith('172.')) return entry.address;
+function safeSend(ws: WebSocket, message: unknown) {
+  if (ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify(message));
+    } catch {
+      /* socket error */
     }
   }
-  for (const list of Object.values(networkInterfaces())) {
-    for (const entry of list ?? []) if (entry.family === 'IPv4' && !entry.internal) return entry.address;
-  }
-  return null;
 }
 
-export const httpServer = createServer((req, res) => {
-  const url = new URL(req.url ?? '/', 'http://localhost');
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    res.writeHead(405, { Allow: 'GET, HEAD' });
+// ── HTTP Server ──────────────────────────────────────────────────────────────
+
+const httpServer = createServer(async (req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-Filename, Range',
+      'Access-Control-Max-Age': '86400',
+    });
     res.end();
     return;
   }
-  if (url.pathname === '/health') {
-    json(res, 200, { status: 'ok', uptime: Math.round((Date.now() - stats.startedAt) / 1000), connections: peers.size, rooms: topics.size });
+
+  const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
+
+  if (url.pathname === '/api/ip' && req.method === 'GET') {
+    const ip = getLocalIP();
+    sendJSON(res, 200, {
+      ip,
+      port: PORT,
+      signalingUrl: `ws://${ip}:${PORT}/ws`,
+      hint: 'Set VITE_SIGNALING_URL=ws://<this-ip>:3001/ws on the other device',
+    });
     return;
   }
-  if (url.pathname === '/api/ip') {
-    if (!config.lanDiscovery) { json(res, 404, { error: 'disabled' }); return; }
-    const ip = lanAddress();
-    json(res, 200, { ip, port: config.port });
+
+  const roomMatch = url.pathname.match(/^\/api\/room\/(.+)$/);
+  if (roomMatch && req.method === 'GET') {
+    const roomId = decodeURIComponent(roomMatch[1]);
+    const room = rooms.get(roomId);
+    if (!room) {
+      sendJSON(res, 404, { error: 'Room not found', roomId, peerCount: 0, peers: [] });
+      return;
+    }
+    sendJSON(res, 200, {
+      roomId,
+      peerCount: room.peers.size,
+      peers: Array.from(room.peers.values()).map(p => ({
+        id: p.id.slice(0, 6),
+        name: p.name || 'Anonymous',
+      })),
+    });
     return;
   }
-  if (serveStatic(req, res, url.pathname)) return;
-  json(res, 404, { error: 'Not found' });
+
+  // Shared clock for watch-party sync (peers estimate their offset to this)
+  if (url.pathname === '/api/time' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(JSON.stringify({ now: Date.now() }));
+    return;
+  }
+
+  if (url.pathname === '/health' && req.method === 'GET') {
+    sendJSON(res, 200, { status: 'ok', rooms: rooms.size, peers: peers.size });
+    return;
+  }
+
+  // ── File Upload Endpoint ──────────────────────────────────────────────────
+  // Body is the raw file bytes. Streamed straight to disk so a 500 MB movie
+  // never has to fit in RAM. Filename arrives URI-encoded in X-Filename.
+  if (url.pathname === '/api/media/upload' && req.method === 'POST') {
+    handleUpload(req, res);
+    return;
+  }
+
+  // ── File Serve Endpoint (with Range support for seeking) ──────────────────
+  const mediaMatch = url.pathname.match(/^\/api\/media\/([^/]+)$/);
+  if (mediaMatch && (req.method === 'GET' || req.method === 'HEAD')) {
+    await handleMediaServe(req, res, decodeURIComponent(mediaMatch[1]));
+    return;
+  }
+
+  sendJSON(res, 404, { error: 'Not found' });
 });
 
-// ── WebSocket signaling ──────────────────────────────────────────────────────
+// ── Media handlers ───────────────────────────────────────────────────────────
 
-const wss = new WebSocketServer({ noServer: true, maxPayload: config.maxMessageBytes, perMessageDeflate: false });
+function handleUpload(req: IncomingMessage, res: ServerResponse) {
+  let originalName = `upload-${Date.now()}`;
+  const header = req.headers['x-filename'];
+  if (typeof header === 'string' && header.trim()) {
+    try {
+      originalName = decodeURIComponent(header);
+    } catch {
+      originalName = header;
+    }
+  }
+  // Strip any path components a client might send
+  originalName = originalName.split(/[\\/]/).pop() || originalName;
+
+  const ext = extname(originalName).toLowerCase();
+  if (!ALLOWED_EXTS.has(ext)) {
+    req.resume();
+    sendJSON(res, 415, { error: `Unsupported file type "${ext || 'none'}". Use audio/video files (mp3, mp4, webm, mkv, …) or .vtt subtitles.` });
+    return;
+  }
+
+  const declaredSize = Number(req.headers['content-length'] || 0);
+  if (declaredSize > MAX_UPLOAD_BYTES) {
+    req.resume();
+    sendJSON(res, 413, { error: 'File too large (max 500 MB)' });
+    return;
+  }
+
+  const fileId = `${randomUUID()}${ext}`;
+  const filepath = join(UPLOADS_DIR, fileId);
+  const out = createWriteStream(filepath);
+  let totalSize = 0;
+  let finished = false;
+
+  const fail = (status: number, message: string) => {
+    if (finished) return;
+    finished = true;
+    out.destroy();
+    unlink(filepath).catch(() => { /* ignore */ });
+    if (!res.headersSent) sendJSON(res, status, { error: message });
+  };
+
+  req.on('data', (chunk: Buffer) => {
+    totalSize += chunk.length;
+    if (totalSize > MAX_UPLOAD_BYTES) {
+      fail(413, 'File too large (max 500 MB)');
+      req.destroy();
+    }
+  });
+  req.on('aborted', () => fail(400, 'Upload aborted'));
+  req.on('error', () => fail(500, 'Upload stream error'));
+  out.on('error', (err) => {
+    console.error('[media] Upload write error:', err);
+    fail(500, 'Upload failed (could not write file)');
+  });
+  out.on('finish', () => {
+    if (finished) return;
+    finished = true;
+    const now = Date.now();
+    uploadMeta.set(fileId, { createdAt: now, lastAccess: now, filename: originalName });
+    const ip = getLocalIP();
+    console.log(`[media] Uploaded: ${originalName} (${(totalSize / 1024 / 1024).toFixed(1)} MB) → ${fileId}`);
+    sendJSON(res, 200, {
+      id: fileId,
+      // Relative path: each peer resolves it against its own route to this server.
+      path: `/api/media/${fileId}`,
+      url: `http://${ip}:${PORT}/api/media/${fileId}`,
+      filename: originalName,
+      size: totalSize,
+    });
+  });
+
+  req.pipe(out);
+}
+
+async function handleMediaServe(req: IncomingMessage, res: ServerResponse, fileId: string) {
+  // Security: only plain generated file names, no path traversal
+  if (!/^[\w-]+\.[\w]+$/.test(fileId)) {
+    sendJSON(res, 400, { error: 'Invalid file ID' });
+    return;
+  }
+
+  const filepath = join(UPLOADS_DIR, fileId);
+  let size: number;
+  try {
+    const stats = await fsStat(filepath);
+    if (!stats.isFile()) throw new Error('not a file');
+    size = stats.size;
+  } catch {
+    sendJSON(res, 404, { error: 'File not found (it may have been cleaned up — upload it again)' });
+    return;
+  }
+
+  const meta = uploadMeta.get(fileId);
+  if (meta) meta.lastAccess = Date.now();
+  else uploadMeta.set(fileId, { createdAt: Date.now(), lastAccess: Date.now(), filename: fileId });
+
+  const mimeType = MIME_TYPES[extname(fileId).toLowerCase()] || 'application/octet-stream';
+  const baseHeaders = {
+    'Content-Type': mimeType,
+    'Accept-Ranges': 'bytes',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+    'Cache-Control': 'no-cache',
+  };
+
+  const range = req.headers.range;
+  if (range && size > 0) {
+    // Supports "bytes=start-end", "bytes=start-" and suffix "bytes=-N"
+    const m = /^bytes=(\d*)-(\d*)/.exec(range);
+    let start = 0;
+    let end = size - 1;
+    if (m) {
+      if (m[1] === '' && m[2] !== '') {
+        start = Math.max(0, size - parseInt(m[2], 10));
+      } else {
+        start = parseInt(m[1] || '0', 10);
+        if (m[2] !== '') end = Math.min(size - 1, parseInt(m[2], 10));
+      }
+    }
+    if (!m || isNaN(start) || isNaN(end) || start > end || start >= size) {
+      res.writeHead(416, { 'Content-Range': `bytes */${size}`, 'Access-Control-Allow-Origin': '*' });
+      res.end();
+      return;
+    }
+    res.writeHead(206, {
+      ...baseHeaders,
+      'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Content-Length': end - start + 1,
+    });
+    if (req.method === 'HEAD') { res.end(); return; }
+    const stream = createReadStream(filepath, { start, end });
+    stream.on('error', () => res.destroy());
+    res.on('close', () => stream.destroy());
+    stream.pipe(res);
+    return;
+  }
+
+  res.writeHead(200, { ...baseHeaders, 'Content-Length': size });
+  if (req.method === 'HEAD') { res.end(); return; }
+  const stream = createReadStream(filepath);
+  stream.on('error', () => res.destroy());
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
+}
+
+// ── WebSocket Server (y-webrtc pub/sub signaling) ────────────────────────────
+
+const wsServer = new WebSocketServer({ noServer: true });
 
 httpServer.on('upgrade', (request, socket, head) => {
-  const { pathname } = new URL(request.url ?? '/', 'http://localhost');
-  if (pathname !== '/ws' && pathname !== '/') { socket.destroy(); return; }
-  if (peers.size >= config.maxConnections) {
-    socket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n');
-    socket.destroy();
-    return;
-  }
-  wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request));
+  wsServer.handleUpgrade(request, socket, head, (ws) => {
+    wsServer.emit('connection', ws, request);
+  });
 });
 
-wss.on('connection', (ws: WebSocket) => {
-  const peer: Peer = { ws, topics: new Set(), tokens: config.burst, lastRefill: Date.now(), alive: true };
-  peers.add(peer);
-  ws.on('pong', () => { peer.alive = true; });
-  ws.on('message', (raw, isBinary) => {
-    if (isBinary) return;
-    stats.messages++;
-    if (!allow(peer)) { stats.dropped++; return; }
-    let message: unknown;
-    try { message = JSON.parse(raw.toString()); } catch { return; }
-    handleMessage(peer, message);
-  });
-  const close = () => {
-    for (const topic of [...peer.topics]) unsubscribe(peer, topic);
-    peers.delete(peer);
+wsServer.on('connection', (socket: WebSocket, req) => {
+  const peerId = randomUUID();
+  const peer: Peer = {
+    id: peerId,
+    ws: socket,
+    rooms: new Set(),
+    connectedAt: Date.now(),
   };
-  ws.on('close', close);
-  ws.on('error', close);
+  peers.set(socket, peer);
+
+  // Check URL query parameters in case client connected with ?roomId=...
+  try {
+    const params = new URL(req.url ?? '', `http://${req.headers.host || 'localhost'}`).searchParams;
+    const initialRoom = params.get('roomId') || params.get('room');
+    const initialName = params.get('name');
+    if (initialName) peer.name = initialName;
+    if (initialRoom) subscribePeerToRoom(peer, initialRoom);
+  } catch {
+    /* ignore malformed url */
+  }
+
+  let isAlive = true;
+  socket.on('pong', () => {
+    isAlive = true;
+  });
+
+  const pingInterval = setInterval(() => {
+    if (!isAlive) {
+      clearInterval(pingInterval);
+      socket.terminate();
+      return;
+    }
+    isAlive = false;
+    socket.ping();
+  }, 30000);
+
+  socket.on('message', (rawData) => {
+    try {
+      const msg = JSON.parse(rawData.toString());
+      handleMessage(peer, msg);
+    } catch {
+      /* ignore invalid JSON */
+    }
+  });
+
+  const cleanup = () => {
+    clearInterval(pingInterval);
+    handlePeerDisconnect(peer);
+  };
+
+  socket.on('close', cleanup);
+  socket.on('error', cleanup);
 });
 
-const heartbeat = setInterval(() => {
-  for (const peer of peers) {
-    if (!peer.alive) { peer.ws.terminate(); continue; }
-    peer.alive = false;
-    try { peer.ws.ping(); } catch { /* closing */ }
+function subscribePeerToRoom(peer: Peer, roomId: string) {
+  if (peer.rooms.has(roomId)) return;
+  peer.rooms.add(roomId);
+
+  let room = rooms.get(roomId);
+  if (!room) {
+    room = { id: roomId, peers: new Map(), createdAt: Date.now() };
+    rooms.set(roomId, room);
   }
-}, config.pingIntervalMs);
-heartbeat.unref();
+  room.peers.set(peer.id, peer);
 
-// ── Lifecycle ────────────────────────────────────────────────────────────────
-
-export function start(port = config.port): Promise<number> {
-  return new Promise(resolvePort => {
-    httpServer.listen(port, config.host, () => {
-      const address = httpServer.address();
-      resolvePort(typeof address === 'object' && address ? address.port : port);
-    });
-  });
+  const displayName = peer.name ? `"${peer.name}" (${peer.id.slice(0, 6)})` : `(${peer.id.slice(0, 6)})`;
+  console.log(`[signaler] ${displayName} joined room ${roomId} — ${room.peers.size} peers`);
 }
 
-export function stop(): Promise<void> {
-  clearInterval(heartbeat);
-  for (const peer of peers) peer.ws.close(1001, 'Server shutting down');
-  return new Promise(done => {
-    wss.close();
-    httpServer.close(() => done());
-    setTimeout(done, 3000).unref();
-  });
-}
+function unsubscribePeerFromRoom(peer: Peer, roomId: string) {
+  if (!peer.rooms.has(roomId)) return;
+  peer.rooms.delete(roomId);
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isMain) {
-  void start().then(port => {
-    const app = existsSync(join(config.staticDir, 'index.html'));
-    const lan = config.lanDiscovery ? lanAddress() : null;
-    console.log(`[server] CRDT Canvas listening on http://localhost:${port}${lan ? `  (LAN: http://${lan}:${port})` : ''}`);
-    console.log(`[server] signaling at ws://localhost:${port}/ws · ${app ? `serving app from ${config.staticDir}` : 'no built app found (run the client build, or use the Vite dev server)'}`);
-  });
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.on(signal, () => {
-      console.log(`[server] ${signal}: shutting down`);
-      void stop().then(() => process.exit(0));
-    });
+  const room = rooms.get(roomId);
+  if (room) {
+    room.peers.delete(peer.id);
+    const displayName = peer.name ? `"${peer.name}" (${peer.id.slice(0, 6)})` : `(${peer.id.slice(0, 6)})`;
+    console.log(`[signaler] ${displayName} left room ${roomId} — ${room.peers.size} remaining`);
+    if (room.peers.size === 0) {
+      rooms.delete(roomId);
+    }
   }
 }
+
+function handlePeerDisconnect(peer: Peer) {
+  for (const roomId of peer.rooms) {
+    unsubscribePeerFromRoom(peer, roomId);
+  }
+  peer.rooms.clear();
+  peers.delete(peer.ws);
+}
+
+function handleMessage(peer: Peer, msg: any) {
+  if (!msg || typeof msg !== 'object') return;
+
+  switch (msg.type) {
+    case 'subscribe': {
+      const topics = Array.isArray(msg.topics) ? msg.topics : (msg.topic ? [msg.topic] : []);
+      for (const topic of topics) {
+        if (typeof topic === 'string') {
+          subscribePeerToRoom(peer, topic);
+        }
+      }
+      break;
+    }
+
+    case 'unsubscribe': {
+      const topics = Array.isArray(msg.topics) ? msg.topics : (msg.topic ? [msg.topic] : []);
+      for (const topic of topics) {
+        if (typeof topic === 'string') {
+          unsubscribePeerFromRoom(peer, topic);
+        }
+      }
+      break;
+    }
+
+    case 'publish': {
+      const topic = msg.topic;
+      if (!topic || typeof topic !== 'string') return;
+
+      const room = rooms.get(topic);
+      if (!room) return;
+
+      // Make sure sender is registered in room
+      if (!peer.rooms.has(topic)) {
+        subscribePeerToRoom(peer, topic);
+      }
+
+      // Check payload for logging WebRTC handshake signals
+      const data = msg.data;
+      if (data && typeof data === 'object') {
+        if (data.type === 'signal') {
+          console.log(`[signaler] Peer-to-peer WebRTC offer/answer/ice-candidate exchanged in room ${topic}`);
+        }
+      }
+
+      // Forward publish message to all other peers in the room
+      const receivers = Array.from(room.peers.values()).filter(p => p.id !== peer.id);
+      msg.clients = receivers.length;
+
+      for (const receiver of receivers) {
+        safeSend(receiver.ws, msg);
+      }
+      break;
+    }
+
+    case 'ping': {
+      safeSend(peer.ws, { type: 'pong' });
+      break;
+    }
+
+    // Support legacy signal payloads if sent directly
+    case 'offer':
+    case 'answer':
+    case 'ice-candidate': {
+      console.log(`[signaler] Peer-to-peer WebRTC offer/answer/ice-candidate exchanged`);
+      for (const roomId of peer.rooms) {
+        const room = rooms.get(roomId);
+        if (room) {
+          for (const [id, target] of room.peers) {
+            if (id !== peer.id) {
+              safeSend(target.ws, { ...msg, fromPeerId: peer.id });
+            }
+          }
+        }
+      }
+      break;
+    }
+  }
+}
+
+// ── Start ────────────────────────────────────────────────────────────────────
+
+httpServer.listen(PORT, () => {
+  const ip = getLocalIP();
+  console.log(`\n  ┌──────────────────────────────────────────────────┐`);
+  console.log(`  │  CRDT Canvas Signaling Server                    │`);
+  console.log(`  │                                                  │`);
+  console.log(`  │  HTTP:    http://localhost:${PORT}                │`);
+  console.log(`  │  WS:      ws://localhost:${PORT}/ws              │`);
+  console.log(`  │  LAN IP:  ${ip}                                 │`);
+  console.log(`  │                                                  │`);
+  console.log(`  │  To connect from another device on same WiFi:    │`);
+  console.log(`  │  1. Set VITE_SIGNALING_URL=ws://${ip}:${PORT}/ws │`);
+  console.log(`  │  2. Use the same room ID on both devices         │`);
+  console.log(`  └──────────────────────────────────────────────────┘\n`);
+});
+
+process.on('SIGINT', () => {
+  console.log('\n[signaler] Shutting down...');
+  wsServer.close();
+  httpServer.close();
+  process.exit(0);
+});

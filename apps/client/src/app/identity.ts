@@ -1,62 +1,99 @@
 /**
- * Local identity: a display name, a colour and a random per-device id.
- * The CRDT actor id is `name#xxxx` so two people called "Alex" never share an
- * edit register; UIs show `actorLabel(actor)`.
+ * Per-device identity & preferences (stored only on this device).
+ *  - deviceId: stable random id that represents "this person on this browser" in room membership
+ *  - name, pointer colour (used for cursor, laser and the colour dot next to your name)
+ *  - the list of rooms this device has joined (for the profile menu)
  */
-import { readString, writeString } from './storage';
 
-export const PEER_COLORS = ['#e03131', '#f08c00', '#2f9e44', '#0c8599', '#1971c2', '#6741d9', '#c2255c', '#5c940d', '#d9480f', '#7048e8'];
+const KEY_DEVICE = 'crdt-device-id';
+const KEY_NAME = 'crdt-canvas-name';
+const KEY_POINTER = 'crdt-pointer-color';
+const KEY_ROOMS = 'crdt-joined-rooms';
 
-export interface Identity {
+export const POINTER_COLORS = ['#E4572E', '#F2A541', '#4CB944', '#2E86AB', '#8E5BD6', '#E2539E', '#17A398', '#C08552'];
+
+/**
+ * Guest tab: opening the app with ?guest=1 gives THIS TAB its own identity (kept in
+ * sessionStorage), so you can test as a second person in the same browser.
+ */
+const KEY_GUEST = 'crdt-guest-tab';
+function detectGuest(): boolean {
+  try {
+    if (new URLSearchParams(window.location.search).get('guest') === '1') sessionStorage.setItem(KEY_GUEST, '1');
+    return sessionStorage.getItem(KEY_GUEST) === '1';
+  } catch { return false; }
+}
+export const IS_GUEST_TAB = typeof window !== 'undefined' && detectGuest();
+
+function store(): Storage { return IS_GUEST_TAB ? sessionStorage : localStorage; }
+function safeGet(key: string): string | null {
+  try { return store().getItem(key); } catch { return null; }
+}
+function safeSet(key: string, value: string) {
+  try { store().setItem(key, value); } catch { /* ignore */ }
+}
+
+export function randomId(len = 8): string {
+  const raw = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID().replace(/-/g, '')
+    : Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  return raw.slice(0, len);
+}
+
+export function getDeviceId(): string {
+  let id = safeGet(KEY_DEVICE);
+  if (!id) {
+    id = randomId(16);
+    safeSet(KEY_DEVICE, id);
+  }
+  return id;
+}
+
+export function getStoredName(): string {
+  return safeGet(KEY_NAME) || '';
+}
+export function setStoredName(name: string) {
+  safeSet(KEY_NAME, name.trim());
+}
+
+export function getPointerColor(): string {
+  let color = safeGet(KEY_POINTER);
+  if (!color) {
+    color = POINTER_COLORS[Math.floor(Math.random() * POINTER_COLORS.length)];
+    safeSet(KEY_POINTER, color);
+  }
+  return color;
+}
+export function setPointerColor(color: string) {
+  safeSet(KEY_POINTER, color);
+}
+
+export interface JoinedRoom {
+  roomId: string;
   name: string;
-  color: string;
-  deviceId: string;
-  actor: string;
+  lastOpened: number;
+  role?: 'host' | 'member';
 }
 
-export function loadIdentity(): Identity {
-  let deviceId = readString('crdt-canvas-device');
-  if (!/^[a-z0-9]{8}$/.test(deviceId)) {
-    deviceId = Array.from(crypto.getRandomValues(new Uint8Array(8)), b => 'abcdefghijkmnpqrstuvwxyz23456789'[b % 32]).join('');
-    writeString('crdt-canvas-device', deviceId);
+export function getJoinedRooms(): JoinedRoom[] {
+  try {
+    const list = JSON.parse(safeGet(KEY_ROOMS) || '[]');
+    return Array.isArray(list)
+      ? list.filter((r: any) => r && typeof r.roomId === 'string').sort((a: JoinedRoom, b: JoinedRoom) => b.lastOpened - a.lastOpened)
+      : [];
+  } catch {
+    return [];
   }
-  const name = readString('crdt-canvas-name').trim().slice(0, 32);
-  let color = readString('crdt-canvas-color');
-  if (!/^#[0-9a-f]{6}$/i.test(color) || color === '#7c3aed') color = PEER_COLORS[hash(deviceId) % PEER_COLORS.length];
-  return { name, color, deviceId, actor: makeActor(name || 'Guest', deviceId) };
 }
 
-export function saveIdentity(next: Pick<Identity, 'name' | 'color'>) {
-  writeString('crdt-canvas-name', next.name.trim().slice(0, 32));
-  writeString('crdt-canvas-color', next.color);
+export function rememberRoom(entry: Omit<JoinedRoom, 'lastOpened'> & { lastOpened?: number }) {
+  const list = getJoinedRooms().filter(r => r.roomId !== entry.roomId);
+  list.unshift({ ...entry, lastOpened: entry.lastOpened ?? Date.now() });
+  safeSet(KEY_ROOMS, JSON.stringify(list.slice(0, 30)));
+  window.dispatchEvent(new Event('crdt-rooms-changed'));
 }
 
-export function makeActor(name: string, deviceId: string): string {
-  return `${name.trim().slice(0, 32) || 'Guest'}#${deviceId.slice(0, 4)}`;
-}
-
-/** Strip the device suffix: `Kevin#ab12` → `Kevin`. Legacy plain names pass through. */
-export function actorLabel(actor: string | undefined): string {
-  if (!actor) return 'Someone';
-  return actor.replace(/#[a-z0-9]{4}$/, '') || 'Someone';
-}
-
-/** Stable colour for an actor whose live presence is unknown. */
-export function actorColor(actor: string): string {
-  return PEER_COLORS[hash(actor) % PEER_COLORS.length];
-}
-
-export function hash(value: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < value.length; i++) {
-    h ^= value.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return '?';
-  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
+export function forgetRoom(roomId: string) {
+  safeSet(KEY_ROOMS, JSON.stringify(getJoinedRooms().filter(r => r.roomId !== roomId)));
+  window.dispatchEvent(new Event('crdt-rooms-changed'));
 }

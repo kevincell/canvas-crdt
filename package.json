@@ -1,17 +1,22 @@
 {
   "name": "crdt-canvas",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "A free, offline-first, end-to-end encrypted collaborative whiteboard built on CRDTs and peer-to-peer WebRTC",
+  "description": "A real-time collaborative drawing board using Yjs CRDTs, WebRTC, and semantic conflict detection",
   "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "dev": "concurrently -n server,client -c blue,magenta \"pnpm --filter @crdt-canvas/server dev\" \"pnpm --filter @crdt-canvas/client dev\"",
-    "build": "pnpm -r build",
-    "start": "pnpm --filter @crdt-canvas/server start",
-    "test": "pnpm -r test",
-    "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit -p packages/engine/tsconfig.json && tsc --noEmit -p apps/client/tsconfig.json && tsc --noEmit -p apps/server/tsconfig.json",
-    "check": "pnpm typecheck && pnpm test"
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "npm --workspace @crdt-canvas/server run dev",
+    "dev:client": "npm --workspace @crdt-canvas/client run dev",
+    "dev:engine": "npm --workspace @crdt-canvas/engine run dev",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "tsc --noEmit -p packages/engine/tsconfig.json && tsc --noEmit -p apps/client/tsconfig.json && tsc --noEmit -p apps/server/tsconfig.json"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
@@ -21,6 +26,5 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  },
-  "packageManager": "pnpm@9.15.9"
+  }
 }
