@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, IconButton, Menu, MenuItem, Snackbar, TextField, Tooltip } from '@mui/material';
 import {
   ShareOutlined, ForumOutlined, LiveTvOutlined, ChatBubbleOutlineOutlined as ChatBubbleOutline, Flag, FileDownloadOutlined, ViewQuiltOutlined,
-  LightModeOutlined, DarkModeOutlined, HelpOutlineOutlined as HelpOutline, MeetingRoomOutlined, ExpandMore, Add, HowToVote, Visibility, Spa,
+  LightModeOutlined, DarkModeOutlined, HelpOutlineOutlined as HelpOutline, MeetingRoomOutlined, ExpandMore, Add, HowToVote, Visibility, Spa, MapOutlined,
 } from '@mui/icons-material';
 import { type Shape, ShapeKind } from '@crdt-canvas/engine';
 import { useCanvasCRDT } from '../hooks/useCanvasCRDT';
@@ -25,6 +25,7 @@ import { ConflictsPanel } from '../features/panels/ConflictsPanel';
 import { CheckpointsPanel } from '../features/panels/CheckpointsPanel';
 import { CommentsPanel } from '../features/panels/CommentsPanel';
 import { AboutPanel } from '../features/panels/AboutPanel';
+import { BoardMapPanel } from '../features/panels/BoardMapPanel';
 import { ProfileMenu, Avatar } from '../features/panels/ProfileMenu';
 import { ShareDialog } from '../features/panels/ShareDialog';
 import { Dot } from '../features/panels/SidePanel';
@@ -38,7 +39,7 @@ import { type RoomApi } from '../features/room/useRoom';
 import { type BoardInfo } from '../features/room/roomTypes';
 import { useThemeMode, v } from '../theme/theme';
 
-type PanelId = 'room' | 'chat' | 'conflicts' | 'checkpoints' | 'comments' | 'about' | null;
+type PanelId = 'room' | 'chat' | 'conflicts' | 'checkpoints' | 'comments' | 'map' | 'about' | null;
 
 export interface BoardViewProps {
   room: RoomApi;
@@ -342,6 +343,15 @@ export function BoardView({ room, board, readOnly, onOpenBoard, onHome, onSwitch
   const statusTip = !connected
     ? 'Can’t reach the signalling server — your changes are saved on this device and sync when you reconnect'
     : othersHere > 0 ? `${crdt.webrtcPeerCount} device link(s), ${crdt.bcPeerCount} tab(s)` : 'Connected and waiting for others — share the room ID or a link';
+  const activitySince = Date.now() - 24 * 60 * 60 * 1000;
+  const changedToday = active.filter(shape => shape.updatedAt >= activitySince).length;
+  const commentsToday = logs.comments.filter(comment => comment.ts >= activitySince).length;
+  const pulseLabel = changedToday || commentsToday
+    ? `Pulse · ${changedToday} changed${commentsToday ? ` · ${commentsToday} comment${commentsToday === 1 ? '' : 's'}` : ''}`
+    : 'Pulse · quiet';
+  const pulseTip = changedToday || commentsToday
+    ? `${changedToday} board object${changedToday === 1 ? '' : 's'} changed and ${commentsToday} comment${commentsToday === 1 ? '' : 's'} added in the last 24 hours. Open checkpoints for a detailed timeline.`
+    : 'No board activity in the last 24 hours. Open checkpoints to review saved board states.';
 
   // ── render ──
   const header = (
@@ -365,6 +375,10 @@ export function BoardView({ room, board, readOnly, onOpenBoard, onHome, onSwitch
           label={statusLabel}
           sx={{ display: { xs: 'none', sm: 'inline-flex' }, height: 24, fontSize: 11.5, bgcolor: v('surface2'), color: v('textMuted'), border: `1px solid ${v('border')}` }} />
       </Tooltip>
+      <Tooltip title={pulseTip}>
+        <Chip size="small" clickable onClick={() => setPanel('checkpoints')} label={pulseLabel}
+          sx={{ display: { xs: 'none', md: 'inline-flex' }, height: 24, fontSize: 11.5, bgcolor: v('primarySoft'), color: v('primaryStrong'), border: `1px solid ${v('border')}` }} />
+      </Tooltip>
       {readOnly && <Chip size="small" icon={<Visibility sx={{ fontSize: 15 }} />} label="View only" sx={{ height: 24, bgcolor: v('accentSoft'), color: v('accent'), fontWeight: 700 }} />}
       <Box sx={{ flex: 1 }} />
 
@@ -374,6 +388,7 @@ export function BoardView({ room, board, readOnly, onOpenBoard, onHome, onSwitch
           <ToolButton placement="bottom" title="Export PNG / PDF" onClick={e => setExportMenu(e.currentTarget)}><FileDownloadOutlined fontSize="small" /></ToolButton>
           <ToolButton placement="bottom" title="Share" onClick={() => setShareOpen(true)}><ShareOutlined fontSize="small" /></ToolButton>
           <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1.2, borderColor: v('border') }} />
+          <ToolButton placement="bottom" title="Board map and search" active={panel === 'map'} onClick={() => togglePanel('map')}><MapOutlined fontSize="small" /></ToolButton>
           <ToolButton placement="bottom" title="Comments" active={panel === 'comments'} onClick={() => togglePanel('comments')} badge={logs.comments.length || undefined}><ChatBubbleOutline fontSize="small" /></ToolButton>
           <ToolButton placement="bottom" title="Checkpoints" active={panel === 'checkpoints'} onClick={() => togglePanel('checkpoints')}><Flag fontSize="small" /></ToolButton>
           <ToolButton placement="bottom" title="Conflicts" active={panel === 'conflicts'} onClick={() => togglePanel('conflicts')} badge={logs.openConflicts.length || undefined}><ConflictIcon /></ToolButton>
@@ -382,6 +397,7 @@ export function BoardView({ room, board, readOnly, onOpenBoard, onHome, onSwitch
           <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1.2, borderColor: v('border') }} />
         </Box>
       )}
+      {readOnly && <ToolButton placement="bottom" title="Board map and search" active={panel === 'map'} onClick={() => togglePanel('map')}><MapOutlined fontSize="small" /></ToolButton>}
       <ToolButton placement="bottom" title={mode === 'day' ? 'Night mode' : 'Day mode'} onClick={toggleMode}>{mode === 'day' ? <DarkModeOutlined fontSize="small" /> : <LightModeOutlined fontSize="small" />}</ToolButton>
       {!readOnly && <ToolButton placement="bottom" title="About" active={panel === 'about'} onClick={() => togglePanel('about')}><HelpOutline fontSize="small" /></ToolButton>}
       {!readOnly && <ToolButton placement="bottom" title="Room details" active={panel === 'room'} onClick={() => togglePanel('room')} badge={room.pendingRequests.length || undefined}><MeetingRoomOutlined fontSize="small" /></ToolButton>}
@@ -507,6 +523,9 @@ export function BoardView({ room, board, readOnly, onOpenBoard, onHome, onSwitch
             }}
             onVote={room.vote}
             onClose={() => setPanel(null)} />
+        )}
+        {panel === 'map' && (
+          <BoardMapPanel shapes={active} selectedIds={selectedIds} onFocus={focusShapes} onClose={() => setPanel(null)} />
         )}
         {panel === 'comments' && (
           <CommentsPanel comments={logs.comments} selectedIds={selectedIds} myDeviceId={me.deviceId} readOnly={readOnly}
