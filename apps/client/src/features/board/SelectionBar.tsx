@@ -84,11 +84,12 @@ export function SelectionBar({
   const fillable = editable.some(canFill);
 
   // Place above the selection, or below if there's no room
-  const barW = 470;
+  const barW = window.innerWidth < 600 ? Math.min(window.innerWidth - 16, 340) : 470;
   const cx = (screen.left + screen.right) / 2;
   const above = screen.top > 70;
   const top = above ? screen.top - 54 : screen.bottom + 14;
-  const left = Math.max(70, Math.min(window.innerWidth - barW - 12, cx - barW / 2));
+  const edge = window.innerWidth < 600 ? 8 : 70;
+  const left = Math.max(edge, Math.min(window.innerWidth - barW - 8, cx - barW / 2));
 
   const currentColor = first?.color ?? INK_COLORS[0];
   const currentWidth = first ? (first.width ?? first.strokeWidth ?? 3) : 3;
@@ -100,7 +101,7 @@ export function SelectionBar({
   return (
     <Box
       onPointerDown={e => e.stopPropagation()}
-      sx={{ ...panelSx, position: 'absolute', left, top, zIndex: 28, display: 'flex', alignItems: 'center', gap: 0.25, px: 0.6, py: 0.45, borderRadius: '12px', animation: 'popIn .12s ease', maxWidth: 'calc(100vw - 24px)', flexWrap: 'wrap' }}
+      sx={{ ...panelSx, position: 'absolute', left, top, zIndex: 28, display: 'flex', alignItems: 'center', gap: 0.25, px: 0.6, py: 0.45, borderRadius: '12px', animation: 'popIn .12s ease', width: { xs: 'calc(100vw - 16px)', sm: 'auto' }, maxWidth: 'calc(100vw - 16px)', maxHeight: { xs: '34vh', sm: 'none' }, overflowY: 'auto', flexWrap: 'wrap' }}
     >
       <Box sx={{ px: 0.75, fontSize: 11.5, fontWeight: 700, color: v('textMuted'), whiteSpace: 'nowrap' }}>
         {count ? `${count} selected` : 'Empty box'}{lockedCount ? ` · ${lockedCount} 🔒` : ''}

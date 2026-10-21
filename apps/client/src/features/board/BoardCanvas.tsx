@@ -90,6 +90,8 @@ export function BoardCanvas(props: BoardCanvasProps) {
   const viewRef = useRef(view);
   viewRef.current = view;
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [coarsePointer, setCoarsePointer] = useState(false);
+  const handlePx = coarsePointer ? 24 : HANDLE_PX;
 
   const imageCache = useRef(new Map<string, HTMLImageElement>());
   const dragRef = useRef<Drag | null>(null);
@@ -137,6 +139,16 @@ export function BoardCanvas(props: BoardCanvasProps) {
   const effectiveShape = useCallback((s: Shape): Shape => {
     const o = overridesRef.current.get(s.id);
     return o ? { ...s, data: o as any } : s;
+  }, []);
+
+  // Larger handles make resize and connector endpoints practical on touch screens.
+  useEffect(() => {
+    const media = window.matchMedia?.('(any-pointer: coarse)');
+    if (!media) return;
+    const sync = () => setCoarsePointer(media.matches);
+    sync();
+    media.addEventListener?.('change', sync);
+    return () => media.removeEventListener?.('change', sync);
   }, []);
 
   // ── resize observer ──
@@ -291,7 +303,7 @@ export function BoardCanvas(props: BoardCanvasProps) {
         ctx.lineWidth = 1.5 / zoom;
         for (const hp of handlePoints(s)) {
           ctx.beginPath();
-          ctx.arc(hp.x, hp.y, (HANDLE_PX / 2) / zoom, 0, Math.PI * 2);
+          ctx.arc(hp.x, hp.y, (handlePx / 2) / zoom, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
         }
@@ -373,7 +385,7 @@ export function BoardCanvas(props: BoardCanvasProps) {
     }
 
     if (local.length || (p.remoteLasers && p.remoteLasers.size)) request();
-  }, [effectiveShape, textEdit?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [effectiveShape, textEdit?.id, handlePx]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const request = useCallback(() => {
     if (rafRef.current == null) rafRef.current = requestAnimationFrame(() => drawRef.current());
@@ -381,7 +393,7 @@ export function BoardCanvas(props: BoardCanvasProps) {
   const drawRef = useRef(draw);
   drawRef.current = draw;
 
-  useEffect(() => { request(); }, [shapes, view, size, mode, selectedIds, conflictAreas, remoteCursors, remoteLasers, tool, style, box, textEdit, cursorTick, request]);
+  useEffect(() => { request(); }, [shapes, view, size, mode, selectedIds, conflictAreas, remoteCursors, remoteLasers, tool, style, box, textEdit, cursorTick, handlePx, request]);
 
   // ── hit helpers ──
   const topHit = useCallback((p: Pt, filter?: (s: Shape) => boolean): Shape | null => {
@@ -401,11 +413,11 @@ export function BoardCanvas(props: BoardCanvasProps) {
     const raw = byIdRef.current.get(ids[0]);
     if (!raw || (raw.data as BoardData).locked) return null;
     const s = resolveLine(effectiveShape(raw), byIdRef.current);
-    const tol = (HANDLE_PX + 3) / viewRef.current.zoom;
+    const tol = (handlePx + 3) / viewRef.current.zoom;
     const hp = handlePoints(s);
     for (let i = 0; i < hp.length; i++) if (Math.hypot(hp[i].x - p.x, hp[i].y - p.y) <= tol) return { idx: i, shape: raw };
     return null;
-  }, [effectiveShape]);
+  }, [effectiveShape, handlePx]);
 
   // ── writes (batched while dragging) ──
   const scheduleFlush = useCallback((op: 'move' | 'resize') => {
@@ -544,7 +556,7 @@ export function BoardCanvas(props: BoardCanvasProps) {
     if (t === 'box') {
       const b = boxRef.current;
       if (b) {
-        const tol = 8 / viewRef.current.zoom;
+        const tol = (coarsePointer ? 22 : 8) / viewRef.current.zoom;
         const corners = boxCorners(b);
         const ci = corners.findIndex(c => Math.hypot(c.x - wp.x, c.y - wp.y) <= tol);
         const ids = selectedRef.current.filter(id => !(byIdRef.current.get(id)?.data as BoardData)?.locked);
@@ -604,7 +616,7 @@ export function BoardCanvas(props: BoardCanvasProps) {
     if (t === 'image') {
       p.onImageRequest(wp);
     }
-  }, [eventPoint, toWorld, topHit, handleAt, commitText, textEdit, request]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [eventPoint, toWorld, topHit, handleAt, commitText, textEdit, request, coarsePointer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const eraseStep = useCallback((path: Pt[]) => {
     const radius = ERASER_SIZES[propsRef.current.eraserSize];
@@ -992,7 +1004,7 @@ export function BoardCanvas(props: BoardCanvasProps) {
       )}
 
       {/* Zoom + / − */}
-      <Box sx={{ position: 'absolute', right: 14, bottom: 14, display: 'flex', flexDirection: 'column', gap: 0.75, zIndex: 20 }}>
+      <Box sx={{ position: 'absolute', right: { xs: 12, md: 14 }, top: { xs: 12, md: 'auto' }, bottom: { xs: 'auto', md: 14 }, display: 'flex', flexDirection: { xs: 'row', md: 'column' }, gap: 0.75, zIndex: 20 }}>
         <Tooltip title="Zoom in" placement="left">
           <IconButton size="small" onClick={() => zoomBy(1.2)} sx={zoomBtnSx}><Add fontSize="small" /></IconButton>
         </Tooltip>

@@ -53,20 +53,20 @@ export function BoardToolbar({
   const showStyle = STYLE_TOOLS.includes(tool);
 
   return (
-    <Box sx={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', display: 'flex', gap: 1, alignItems: 'flex-start', zIndex: 25, maxHeight: 'calc(100% - 24px)' }}>
-      <Box sx={{ ...panelSx, p: 0.6, display: 'flex', flexDirection: 'column', gap: 0.35, overflowY: 'auto' }} role="toolbar" aria-label="Drawing tools" aria-orientation="vertical">
+    <Box sx={{ position: 'absolute', left: { xs: 8, md: 12 }, right: { xs: 8, md: 'auto' }, top: { xs: 'auto', md: '50%' }, bottom: { xs: 8, md: 'auto' }, transform: { xs: 'none', md: 'translateY(-50%)' }, display: 'flex', flexDirection: { xs: 'column-reverse', md: 'row' }, gap: 1, alignItems: { xs: 'stretch', md: 'flex-start' }, zIndex: 25, maxHeight: { xs: 'calc(100% - 16px)', md: 'calc(100% - 24px)' } }}>
+      <Box sx={{ ...panelSx, p: 0.6, display: 'flex', flexDirection: { xs: 'row', md: 'column' }, gap: 0.35, overflowX: { xs: 'auto', md: 'hidden' }, overflowY: { xs: 'hidden', md: 'auto' }, width: { xs: '100%', md: 'auto' } }} role="toolbar" aria-label="Drawing tools" aria-orientation="vertical">
         {TOOLS.map(t => (
           <ToolButton key={t.id} title={t.label} shortcut={t.key} active={tool === t.id} onClick={() => setTool(t.id)}>
             {t.id === 'laser' ? <Box sx={{ color: tool === 'laser' ? laserColor : 'inherit', display: 'flex' }}>{t.icon}</Box> : t.icon}
           </ToolButton>
         ))}
-        <Divider sx={{ my: 0.4, borderColor: v('border') }} />
+        <Divider sx={{ my: { xs: 0, md: 0.4 }, mx: { xs: 0.4, md: 0 }, borderColor: v('border'), display: { xs: 'none', md: 'block' } }} />
         <ToolButton title="Undo" shortcut="Ctrl+Z" disabled={!canUndo} onClick={onUndo}><Undo fontSize="small" /></ToolButton>
         <ToolButton title="Redo" shortcut="Ctrl+Y" disabled={!canRedo} onClick={onRedo}><Redo fontSize="small" /></ToolButton>
       </Box>
 
       {(showStyle || tool === 'eraser') && (
-        <Box sx={{ ...panelSx, p: 1.25, width: 214, display: 'flex', flexDirection: 'column', gap: 1.1, animation: 'fadeIn .15s ease' }}>
+        <Box sx={{ ...panelSx, p: 1.25, width: { xs: '100%', md: 214 }, maxHeight: { xs: '36vh', md: 'none' }, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1.1, animation: 'fadeIn .15s ease' }}>
           {tool === 'eraser' ? (
             <>
               <Label>Eraser size</Label>
