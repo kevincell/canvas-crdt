@@ -57,7 +57,11 @@ export default defineConfig({
       },
     },
   },
-  optimizeDeps: {
+  preview: {
+    host: '0.0.0.0',
+    port: 5173,
+  },
+    optimizeDeps: {
     // Pre-bundle simple-peer so Vite transforms CJS → ESM.
     include: ['simple-peer', 'events', 'buffer', 'stream-browserify', 'crypto-browserify', 'path-browserify', 'url', 'assert', 'constants-browserify'],
     esbuildOptions: {

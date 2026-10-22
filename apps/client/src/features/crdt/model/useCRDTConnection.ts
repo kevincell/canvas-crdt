@@ -6,6 +6,7 @@ import { Awareness } from 'y-protocols/awareness';
 import { CURRENT_BOARD_SCHEMA_VERSION, migrateBoardDocument } from '@crdt-canvas/engine';
 import { deleteMigrationBackup, getMigrationBackup, saveMigrationBackup } from '../../canvas/migrationRecovery';
 import { getDeviceId } from '../../../app/identity';
+import { fetchLanIp, resolveSignalingUrl } from '../../../app/signaling';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'syncing' | 'offline';
 export type PersistenceState = 'loading' | 'ready' | 'error' | 'migration-error';
@@ -112,26 +113,9 @@ export function useCRDTConnection(
 
     doc.getText('chat');
 
-    let signalingUrl = import.meta.env.VITE_SIGNALING_URL;
-    let fetchedIP = '';
-    try {
-      const resp = await fetch('/api/ip');
-      const data = await resp.json();
-      fetchedIP = data.ip || data.localIP || '';
-      setLocalIP(fetchedIP);
-    } catch {
-      setLocalIP('');
-    }
-
-    const host = window.location.hostname || 'localhost';
-    const targetHost = (host && host !== 'localhost' && host !== '127.0.0.1') ? host : (fetchedIP || 'localhost');
-    const query = actorName ? `?name=${encodeURIComponent(actorName)}` : '';
-    let finalSignalingUrl = signalingUrl;
-    if (finalSignalingUrl) {
-      finalSignalingUrl = finalSignalingUrl.includes('?') ? `${finalSignalingUrl}&name=${encodeURIComponent(actorName)}` : `${finalSignalingUrl}${query}`;
-    } else {
-      finalSignalingUrl = `ws://${targetHost}:3001/ws${query}`;
-    }
+    const fetchedIP = await fetchLanIp();
+    setLocalIP(fetchedIP);
+    const finalSignalingUrl = await resolveSignalingUrl(actorName);
 
     const provider = new WebrtcProvider(roomId, doc, {
       signaling: [finalSignalingUrl],

@@ -501,7 +501,9 @@ export function BoardCanvas(props: BoardCanvasProps) {
     if (textEdit) { commitText(); }
     const sp = eventPoint(e);
     pointersRef.current.set(e.pointerId, sp);
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    // Some mobile WebViews expose Pointer Events but throw while capturing a touch.
+    // Drawing must continue when capture is unavailable.
+    try { (e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId); } catch { /* touch capture is optional */ }
 
     // Pinch with two fingers
     if (pointersRef.current.size === 2) {

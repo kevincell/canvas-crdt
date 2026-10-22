@@ -115,17 +115,22 @@ setInterval(cleanupUploads, 15 * 60 * 1000); // Check every 15 minutes
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function getLocalIP(): string {
-  const nets = networkInterfaces();
-  for (const _name of Object.keys(nets)) {
-    const iface = nets[_name] ?? [];
-    for (const entry of iface) {
-      if (entry.family === 'IPv4' && !entry.internal) {
-        return entry.address;
-      }
+function getLanIPs(): string[] {
+  const ignored = /^(lo|docker|br-|veth|virbr|zt|tailscale)/i;
+  const candidates: Array<{ name: string; address: string }> = [];
+  for (const [name, entries] of Object.entries(networkInterfaces())) {
+    if (ignored.test(name)) continue;
+    for (const entry of entries ?? []) {
+      if (entry.family === 'IPv4' && !entry.internal) candidates.push({ name, address: entry.address });
     }
   }
-  return '127.0.0.1';
+  // Prefer ordinary wired/wireless adapters. LAN_IP remains available for hosts
+  // with several active networks or a nonstandard adapter name.
+  return candidates.sort((a, b) => Number(!/^(en|eth|wl|wi)/i.test(a.name)) - Number(!/^(en|eth|wl|wi)/i.test(b.name))).map(c => c.address);
+}
+
+function getLocalIP(): string {
+  return process.env.LAN_IP?.trim() || getLanIPs()[0] || '127.0.0.1';
 }
 
 function sendJSON(res: ServerResponse, status: number, data: unknown) {
@@ -168,6 +173,7 @@ const httpServer = createServer(async (req, res) => {
     const ip = getLocalIP();
     sendJSON(res, 200, {
       ip,
+      ips: getLanIPs(),
       port: PORT,
       signalingUrl: `ws://${ip}:${PORT}/ws`,
       hint: 'Set VITE_SIGNALING_URL=ws://<this-ip>:3001/ws on the other device',
@@ -558,7 +564,7 @@ function handleMessage(peer: Peer, msg: any) {
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, '0.0.0.0', () => {
   const ip = getLocalIP();
   console.log(`\n  ┌──────────────────────────────────────────────────┐`);
   console.log(`  │  CRDT Canvas Signaling Server                    │`);

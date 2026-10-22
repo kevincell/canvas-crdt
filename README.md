@@ -238,7 +238,9 @@ What changed in this version: **[UPDATES.md](./UPDATES.md)** (details) and **[CH
 | A second person in the same browser (testing) | `http://localhost:5173/?guest=1` |
 | View only | Share → *View only* link (ends in `&view=1`) |
 
-Windows Firewall must allow ports 5173 and 3001 for other devices.
+Windows Firewall must allow ports 5173 and 3001 for other devices. If the machine has several network adapters and Share shows the wrong address, start the signaler with `LAN_IP=<reachable-address> npm run dev:server` and use that address in the phone URL.
+
+Use the **Edit** link for people who need to draw. The **View only** link intentionally disables all canvas writes.
 
 Try it with two people:
 1. A: open http://localhost:5173, enter a name, **Create room**.
