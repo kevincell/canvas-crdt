@@ -100,6 +100,7 @@ export function BoardCanvas(props: BoardCanvasProps) {
   const flushTimerRef = useRef<number | null>(null);
   const spaceRef = useRef(false);
   const pointersRef = useRef(new Map<number, Pt>());
+  const uncapturedPointersRef = useRef(new Set<number>());
   const pinchRef = useRef<{ dist: number; zoom: number; world: Pt } | null>(null);
   const hoverRef = useRef<Pt | null>(null);
   const localLaserRef = useRef<Array<Pt & { t: number }>>([]);
@@ -503,7 +504,13 @@ export function BoardCanvas(props: BoardCanvasProps) {
     pointersRef.current.set(e.pointerId, sp);
     // Some mobile WebViews expose Pointer Events but throw while capturing a touch.
     // Drawing must continue when capture is unavailable.
-    try { (e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId); } catch { /* touch capture is optional */ }
+    try {
+      (e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+      uncapturedPointersRef.current.delete(e.pointerId);
+    } catch {
+      // Keep tracking this pointer at window level if the browser cannot capture it.
+      uncapturedPointersRef.current.add(e.pointerId);
+    }
 
     // Pinch with two fingers
     if (pointersRef.current.size === 2) {
@@ -742,6 +749,7 @@ export function BoardCanvas(props: BoardCanvasProps) {
 
   const onPointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     pointersRef.current.delete(e.pointerId);
+    uncapturedPointersRef.current.delete(e.pointerId);
     if (pinchRef.current && pointersRef.current.size < 2) { pinchRef.current = null; return; }
     const d = dragRef.current;
     dragRef.current = null;
@@ -819,6 +827,39 @@ export function BoardCanvas(props: BoardCanvasProps) {
         break;
     }
   }, [finishOverrides, openTextEditor, topHit, request]);
+
+  // Pointer capture is unreliable in some mobile browsers. If capture failed,
+  // finish the gesture from the window and include the release coordinate so
+  // the previewed final segment is committed to the shared document.
+  const pointerMoveRef = useRef(onPointerMove);
+  const pointerUpRef = useRef(onPointerUp);
+  pointerMoveRef.current = onPointerMove;
+  pointerUpRef.current = onPointerUp;
+  useEffect(() => {
+    const onWindowMove = (event: PointerEvent) => {
+      if (uncapturedPointersRef.current.has(event.pointerId)) {
+        pointerMoveRef.current(event as unknown as React.PointerEvent<HTMLCanvasElement>);
+      }
+    };
+    const onWindowUp = (event: PointerEvent) => {
+      if (!uncapturedPointersRef.current.has(event.pointerId)) return;
+      const pointerEvent = event as unknown as React.PointerEvent<HTMLCanvasElement>;
+      pointerMoveRef.current(pointerEvent);
+      pointerUpRef.current(pointerEvent);
+    };
+    const onWindowCancel = (event: PointerEvent) => {
+      if (!uncapturedPointersRef.current.has(event.pointerId)) return;
+      pointerUpRef.current(event as unknown as React.PointerEvent<HTMLCanvasElement>);
+    };
+    window.addEventListener('pointermove', onWindowMove);
+    window.addEventListener('pointerup', onWindowUp);
+    window.addEventListener('pointercancel', onWindowCancel);
+    return () => {
+      window.removeEventListener('pointermove', onWindowMove);
+      window.removeEventListener('pointerup', onWindowUp);
+      window.removeEventListener('pointercancel', onWindowCancel);
+    };
+  }, []);
 
   const onDoubleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const p = propsRef.current;

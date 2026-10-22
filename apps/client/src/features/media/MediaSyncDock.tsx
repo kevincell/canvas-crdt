@@ -83,7 +83,12 @@ function uploadToMediaServer(
       if (xhr.status >= 200 && xhr.status < 300 && data?.path) resolve(data);
       else reject(new Error(data?.error || `Upload failed (HTTP ${xhr.status})`));
     };
-    xhr.onerror = () => reject(new Error('Could not reach the media server (is the signaling server running on port 3001?)'));
+    xhr.onerror = () => {
+      const endpoint = getMediaServerOrigin() || 'this page';
+      reject(new Error(`Could not upload to the media server at ${endpoint}. Check that the host is reachable on the same network and that port 3001 is allowed.`));
+    };
+    xhr.ontimeout = () => reject(new Error('Upload timed out. Check the network connection and try again.'));
+    xhr.timeout = 10 * 60 * 1000;
     xhr.onabort = () => reject(new Error('Upload cancelled'));
     xhr.send(file);
   });

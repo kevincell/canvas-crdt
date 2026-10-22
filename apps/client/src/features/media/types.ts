@@ -130,20 +130,28 @@ export function syncClockWithServer(force = false): Promise<void> {
  */
 export function getMediaServerOrigin(): string {
   const envUrl = (import.meta as any).env?.VITE_SIGNALING_URL as string | undefined;
+  if (typeof window === 'undefined') return '';
+  const pageHost = window.location.hostname || 'localhost';
+  const isLoopback = (host: string) => ['localhost', '127.0.0.1', '[::1]', '::1'].includes(host);
+
   if (envUrl) {
     try {
       const parsed = new URL(envUrl);
       const protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
+      // A localhost endpoint configured for the host machine is unreachable
+      // from phones. Use the same LAN host that served this page.
+      if (isLoopback(parsed.hostname) && !isLoopback(pageHost)) parsed.hostname = pageHost;
+      // Never issue an insecure media request from an HTTPS page. Deployments
+      // should proxy /api to the media server on the page's origin.
+      if (window.location.protocol === 'https:' && protocol === 'http:') return '';
       return `${protocol}//${parsed.host}`;
     } catch {
       /* fall through */
     }
   }
-  if (typeof window === 'undefined') return '';
   // Page served over https cannot load http media (mixed content) — use the dev-server proxy instead.
   if (window.location.protocol === 'https:') return '';
-  const host = window.location.hostname || 'localhost';
-  return `http://${host}:3001`;
+  return `http://${pageHost}:3001`;
 }
 
 /**
